@@ -13,12 +13,13 @@ class TestSettings < Minitest::Test
       assert_equal IDS, s['enabled']
       assert_equal [], s['userImages']
       assert_equal false, s['wallpaper']
+      assert_equal true, s['pauseOnBattery']
     end
   end
 
   def test_roundtrip
     Dir.mktmpdir do |dir|
-      original = { 'enabled' => ['a'], 'userImages' => [{ 'id' => 'u1', 'file' => 'u1.jpg', 'title' => 'x' }], 'wallpaper' => true }
+      original = { 'enabled' => ['a'], 'userImages' => [{ 'id' => 'u1', 'file' => 'u1.jpg', 'title' => 'x' }], 'wallpaper' => true, 'pauseOnBattery' => false }
       AppSettings.save(dir, original)
       assert_equal original, AppSettings.load(dir, IDS)
     end

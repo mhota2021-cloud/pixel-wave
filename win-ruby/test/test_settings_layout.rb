@@ -16,6 +16,8 @@ class TestSettingsLayout < Minitest::Test
   #当たり判定（ボタンとカードと削除）
   def test_hit_test
     rects, cards = SettingsLayout.layout(880, 760, 8, 0)
+    bx, by, _bw, _bh = rects[:battery]
+    assert_equal :battery, SettingsLayout.hit_test(rects, cards, bx + 2, by + 2)
     ax, ay, _aw, _ah = rects[:add]
     assert_equal :add, SettingsLayout.hit_test(rects, cards, ax + 2, ay + 2)
     wx, wy, _ww, _wh = rects[:wallpaper]

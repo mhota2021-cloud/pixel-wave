@@ -12,7 +12,7 @@ class DisplayWindow < NativeWindow
   TIMER_CHECK = 2
 
   #初期化（引数modeはwallpaperかscreensaver、引数paintingsは使う絵の一覧、引数cache_dirはキャッシュのフォルダ）
-  def initialize(mode:, paintings:, cache_dir:)
+  def initialize(mode:, paintings:, cache_dir:, pause_on_battery: true)
     @mode = mode
     if mode == :wallpaper
       x, y, w, h = Platform::API_READY ? Platform.virtual_screen : [0, 0, 1280, 720]
@@ -39,6 +39,7 @@ class DisplayWindow < NativeWindow
     @last_tick_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     @paused = false
     @mouse_origin = nil
+    @pause_on_battery = pause_on_battery
   end
 
   #表示を始める（壁紙の貼り付けは、ウィンドウを作ったこのスレッドで行う）
@@ -130,7 +131,7 @@ class DisplayWindow < NativeWindow
     @last_tick_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     return unless Platform::API_READY
     was_paused = @paused
-    @paused = Platform.foreground_fullscreen?(@hwnd) || Platform.battery_powered?
+    battery_paused = @pause_on_battery && Platform.battery_powered?\n    @paused = Platform.foreground_fullscreen?(@hwnd) || battery_paused
     if was_paused && !@paused
       advance_frame
       schedule_tick

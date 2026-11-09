@@ -181,6 +181,8 @@ class SettingsWindow < NativeWindow
     @buffer.fill_all(BG)
     draw_preview(rects)
     draw_grid(rects, cards)
+    battery_label = @settings['pauseOnBattery'] ? 'バッテリー時：一時停止' : 'バッテリー時：常に動かす'
+    draw_button(rects[:battery], battery_label, :normal, @hover == :battery)
     draw_button(rects[:add], '＋', :normal, @hover == :add)
     draw_button(rects[:wallpaper], @settings['wallpaper'] ? '壁紙を止める' : '壁紙にする', :accent, @hover == :wallpaper)
     draw_button(rects[:saver], 'スクリーンセーバーにする', :normal, @hover == :saver)
@@ -337,6 +339,9 @@ class SettingsWindow < NativeWindow
     rects, cards = SettingsLayout.layout(@width, @height, list.length, @scroll)
     target = SettingsLayout.hit_test(rects, cards, mx, my)
     case target
+    when :battery
+      @settings['pauseOnBattery'] = !@settings['pauseOnBattery']
+      persist
     when :add
       add_images_via_dialog
     when :wallpaper

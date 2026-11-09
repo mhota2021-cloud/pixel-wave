@@ -31,7 +31,8 @@ when :screensaver, :wallpaper
   DisplayWindow.new(
     mode: mode,
     paintings: list,
-    cache_dir: Platform.cache_dir
+    cache_dir: Platform.cache_dir,
+    pause_on_battery: settings['pauseOnBattery']
   ).start
 else
   #設定画面は1つだけにする（名前付きミューテックスで気づき、開いていれば前に出して終わる）
