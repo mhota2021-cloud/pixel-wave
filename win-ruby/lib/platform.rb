@@ -152,8 +152,10 @@ module Platform
     ''
   end
 
-#壁紙用の受け皿ウィンドウ（WorkerW）を探す（Lively Wallpaperの手法）
-def find_workerw(log_path = nil)
+#壁紙として貼り付ける（引数hwndは自ウィンドウ、引数xとyは置く場所、引数wとhは大きさ、引数log_pathは記録の場所）
+  #Windows 11 24H2の階層構造に対応：
+  #Progmanの子ウィンドウとして配置し、アイコン層（SHELLDLL_DefView）の直後、壁紙レンダラー層（WorkerW）の手前に挟み込む
+  def attach_wallpaper(hwnd, x, y, w, h, log_path)
     progman = FindWindowW(wide('Progman'), nil)
     raise 'Progmanが見つかりません' if progman.nil? || progman.null?
 
@@ -161,76 +163,26 @@ def find_workerw(log_path = nil)
     SendMessageTimeoutW(progman, 0x052C, 0xD, 0, 0, 1000, result)
     SendMessageTimeoutW(progman, 0x052C, 0xD, 1, 0, 1000, result)
 
-    #Progmanの子ウィンドウをすべてダンプ
-    if log_path
-      File.open(log_path, 'a') do |f|
-        f.puts "#{Time.now}: --- Progman(0x#{progman.to_i.to_s(16)})子ウィンドウ一覧 ---"
-        child = nil
-        loop do
-          child = FindWindowExW(progman, child, nil, nil)
-          break if child.nil? || child.null?
-          cname = class_name(child)
-          f.puts "    子: 0x#{child.to_i.to_s(16)}, class=#{cname}"
-        end
-        f.puts "#{Time.now}: --- トップレベルWorkerW一覧 ---"
-        top_w = nil
-        loop do
-          top_w = FindWindowExW(nil, top_w, wide('WorkerW'), nil)
-          break if top_w.nil? || top_w.null?
-          sub_defview = FindWindowExW(top_w, nil, wide('SHELLDLL_DefView'), nil)
-          f.puts "    トップWorkerW: 0x#{top_w.to_i.to_s(16)}, has_defview=#{!sub_defview.nil? && !sub_defview.null?}"
-        end
-      end rescue nil
-    end
+    defview = FindWindowExW(progman, nil, wide('SHELLDLL_DefView'), nil)
+    raise 'SHELLDLL_DefViewが見つかりません' if defview.nil? || defview.null?
 
-    #方法1: SHELLDLL_DefViewを持つトップレベルウィンドウの次の兄弟WorkerW
-    target_workerw = nil
-    defview_parent = nil
-    callback = Fiddle::Closure::BlockCaller.new(Fiddle::TYPE_INT, [Fiddle::TYPE_VOIDP, Fiddle::TYPE_INTPTR_T]) do |top_hwnd, _lparam|
-      defview = FindWindowExW(top_hwnd, nil, wide('SHELLDLL_DefView'), nil)
-      if defview && !defview.null?
-        defview_parent = top_hwnd
-        target_workerw = FindWindowExW(nil, top_hwnd, wide('WorkerW'), nil)
-        0
-      else
-        1
-      end
-    end
-    EnumWindows(callback, 0)
+    #1. トップレベルウィンドウの段階でレイヤード属性を設定（DWM合成を保証）
+    exstyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
+    SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exstyle | WS_EX_LAYERED)
+    res_layered = SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA)
+    err_layered = GetLastError()
 
-    if target_workerw && !target_workerw.null?
-      File.open(log_path, 'a') { |f| f.puts "#{Time.now}: [探索] DefView親(0x#{defview_parent.to_i.to_s(16)})の次のトップレベルWorkerW(0x#{target_workerw.to_i.to_s(16)})を発見" } rescue nil if log_path
-      return target_workerw
-    end
-
-    #方法2: Progmanの直接の子にWorkerWがいる構成
-    workerw = FindWindowExW(progman, nil, wide('WorkerW'), nil)
-    if workerw && !workerw.null?
-      File.open(log_path, 'a') { |f| f.puts "#{Time.now}: [探索] Progmanの子WorkerW(0x#{workerw.to_i.to_s(16)})を発見" } rescue nil if log_path
-      return workerw
-    end
-
-    #フォールバック: Progman自身
-    File.open(log_path, 'a') { |f| f.puts "#{Time.now}: [探索] フォールバックでProgman自身を使用" } rescue nil if log_path
-    progman
-  end
-
-  #壁紙として貼り付ける（引数hwndは自ウィンドウ、引数xとyは置く場所、引数wとhは大きさ、引数log_pathは記録の場所）
-  def attach_wallpaper(hwnd, x, y, w, h, log_path)
-    host = find_workerw(log_path)
-    raise '壁紙の配置先ウィンドウが見つかりません' if host.nil? || host.null?
-
-    ShowWindow(host, 5) # SW_SHOW = 5
-
-    #子ウィンドウのスタイルに変更してWorkerWの子にする
+    #2. 子ウィンドウのスタイルに変更してProgmanの直接の子にする
     style = GetWindowLongPtrW(hwnd, GWL_STYLE)
     SetWindowLongPtrW(hwnd, GWL_STYLE, (style & ~WS_POPUP & ~0x00C00000 & ~0x00040000) | WS_CHILD | WS_VISIBLE | 0x04000000)
-    SetParent(hwnd, host)
-    SetWindowPos(hwnd, nil, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED)
+    SetParent(hwnd, progman)
+
+    #3. アイコン層（defview）の直後、壁紙レンダラー（WorkerW）の手前に配置
+    SetWindowPos(hwnd, defview, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED)
     InvalidateRect(hwnd, nil, 1)
     UpdateWindow(hwnd)
 
-    File.open(log_path, 'a') { |f| f.puts "#{Time.now}: ホスト(0x#{host.to_i.to_s(16)}, クラス=#{class_name(host)})の子として配置完了" } rescue nil
+    File.open(log_path, 'a') { |f| f.puts "#{Time.now}: Progmanの子にし、defview直後へ配置 (layered=#{res_layered}, err=#{err_layered})" } rescue nil
     true
   end
   alias attach_24h2 attach_wallpaper
