@@ -1,4 +1,4 @@
-#設定画面（GDIで描く。プレビューと絵の一覧と2つのボタンだけ）
+﻿#設定画面（GDIで描く。プレビューと絵の一覧と2つのボタンだけ）
 #裏画面に描き、操作があったときとプレビューが動いているときだけ描き直す
 require 'fileutils'
 require 'securerandom'
@@ -109,12 +109,24 @@ class SettingsWindow < NativeWindow
     Platform.CreateFontW(-px, 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 0, 0, name_ptr)
   end
 
-  #プレビュー用のエンジンを作り直す
+  #プレビュー用のエンジンを作り直す（実際の画面と同じ16:9の比率で中央に表示し、絵が横長に切り抜かれすぎないようにする）
   def build_preview
     list = Loader.paintings(@settings, @paintings_dir, @data_dir)
     rects, _cards = SettingsLayout.layout(@width, @height, items.length, @scroll)
-    cols = [(rects[:preview][2] / WaveEngine::DOT.to_f).ceil, 1].max
-    rows = [(rects[:preview][3] / WaveEngine::DOT.to_f).ceil, 1].max
+    px, py, pw, ph = rects[:preview]
+    #16:9で内接する大きさを計算
+    target_aspect = 16.0 / 9.0
+    if pw.to_f / ph > target_aspect
+      content_h = ph
+      content_w = (ph * target_aspect).round
+    else
+      content_w = pw
+      content_h = (pw / target_aspect).round
+    end
+    cols = [(content_w / WaveEngine::DOT.to_f).ceil, 1].max
+    rows = [(content_h / WaveEngine::DOT.to_f).ceil, 1].max
+    @preview_offset_x = px + (pw - cols * WaveEngine::DOT) / 2
+    @preview_offset_y = py + (ph - rows * WaveEngine::DOT) / 2
     grids = Loader.grids(list, cols, rows, Platform.cache_dir, Wic.method(:decode))
     @engine = WaveEngine.new(grids, cols, rows)
     @preview_cols = cols
@@ -172,12 +184,16 @@ class SettingsWindow < NativeWindow
   #プレビューを描く（引数rectsは配置）
   def draw_preview(rects)
     x, y, w, h = rects[:preview]
-    @buffer.fill([x, y, w, h], PREVIEW_BG)
+    @buffer.fill([x, y, w, h], BG)
+    ox = @preview_offset_x || x
+    oy = @preview_offset_y || y
+    #16:9の表示領域の内側を少し濃い背景で塗る
+    @buffer.fill([ox, oy, @preview_cols * WaveEngine::DOT, (@dot_colors.empty? ? 0 : (@dot_colors.keys.max / @preview_cols + 1)) * WaveEngine::DOT], PREVIEW_BG) if @preview_cols
     @dot_colors.each do |i, rgb|
       col = i % @preview_cols
       row = i / @preview_cols
       dx, dy, dw, dh = RenderMath.dot_rect(col, row, WaveEngine::DOT, WaveEngine::FILL)
-      @buffer.fill([x + dx, y + dy, dw, dh], rgb)
+      @buffer.fill([ox + dx, oy + dy, dw, dh], rgb)
     end
   end
 
