@@ -52,6 +52,7 @@ class SettingsWindow < NativeWindow
     @hover = nil
     @engine_time = 0.0
     @last_tick_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    sync_wallpaper_state
     build_preview
   end
 
@@ -416,6 +417,21 @@ class SettingsWindow < NativeWindow
       @settings['enabled'] << id
     end
     persist unless paths.empty?
+  end
+
+  #壁紙プロセスの実際の状態と設定を合わせる
+  def sync_wallpaper_state
+    pid_path = File.join(@data_dir, 'wallpaper.pid')
+    running = false
+    if File.exist?(pid_path)
+      pid = File.read(pid_path).strip.to_i
+      running = Platform.process_alive?(pid)
+      File.delete(pid_path) unless running
+    end
+    if @settings['wallpaper'] != running
+      @settings['wallpaper'] = running
+      AppSettings.save(@data_dir, @settings)
+    end
   end
 
   #壁紙の開始と停止

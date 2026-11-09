@@ -161,7 +161,8 @@ module Platform
     sz = [w, h].pack('l<2')
     pt_src = [0, 0].pack('l<2')
     blend = [0, 0, 255, 0].pack('CCCC')
-    UpdateLayeredWindow(hwnd, nil, pt_dst, sz, hdc_src, pt_src, 0, blend, 2)
+    res = UpdateLayeredWindow(hwnd, nil, pt_dst, sz, hdc_src, pt_src, 0, blend, 2)
+    res != 0
   end
   #壁紙用の受け皿ウィンドウ（WorkerW）を探す（Lively Wallpaperと同様の手法）
   def find_workerw
@@ -203,7 +204,8 @@ module Platform
     SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exstyle | WS_EX_LAYERED)
     SetParent(hwnd, workerw)
     SetWindowPos(hwnd, nil, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED)
-    File.open(log_path, 'a') { |f| f.puts "#{Time.now}: WorkerW(0x#{workerw.to_i.to_s(16)})の子として壁紙を配置した" } rescue nil
+    ShowWindow(hwnd, 5) # SW_SHOWを明示的に呼び出して可視化を保証
+    File.open(log_path, 'a') { |f| f.puts "#{Time.now}: WorkerW(0x#{workerw.to_i.to_s(16)})の子として壁紙を配置した（ShowWindow完了）" } rescue nil
     true
   end
   alias attach_24h2 attach_wallpaper
@@ -261,6 +263,18 @@ module Platform
   end
 
   #プロセスを終了させる（引数pidはプロセスID）
+  #プロセスが動いているか調べる
+  def process_alive?(pid)
+    return false if pid.nil? || pid <= 0
+    handle = OpenProcess(0x1000, 0, pid)
+    return false if handle.nil? || handle.null?
+    CloseHandle(handle)
+    true
+  rescue StandardError
+    false
+  end
+
+  #プロセスを強制終了する
   def kill_process(pid)
     handle = OpenProcess(1, 0, pid)
     return false if handle.nil? || handle.null?
