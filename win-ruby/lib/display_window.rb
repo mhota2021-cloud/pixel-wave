@@ -1,4 +1,4 @@
-#表示ウィンドウ（壁紙とスクリーンセーバーで共用。GDIで描く）
+﻿#表示ウィンドウ（壁紙とスクリーンセーバーで共用。GDIで描く）
 #裏画面に変わったドットだけを塗り、WM_PAINTでは写すだけにする
 require_relative 'window'
 require_relative 'engine'
@@ -45,6 +45,7 @@ class DisplayWindow < NativeWindow
   def start
     attach_wallpaper if @mode == :wallpaper
     advance_frame
+    Platform.UpdateWindow(@hwnd) if Platform::API_READY
     set_timer(TIMER_CHECK, 2000)
     schedule_tick
     run
@@ -82,7 +83,7 @@ class DisplayWindow < NativeWindow
   #壁紙として貼り付ける（失敗しても表示は続ける）
   def attach_wallpaper
     log_path = File.join(Platform.data_dir, 'wallpaper.log')
-    Platform.attach_24h2(@hwnd, 0, 0, log_path)
+    Platform.attach_24h2(@hwnd, 0, 0, @width, @height, log_path)
   rescue StandardError => e
     File.open(log_path, 'a') { |f| f.puts "#{Time.now}: 貼り付け失敗（#{e.message}）" } rescue nil
   end
@@ -95,6 +96,7 @@ class DisplayWindow < NativeWindow
       @buffer.fill(RenderMath.dot_rect(col, row, WaveEngine::DOT, WaveEngine::FILL), rgb)
     end
     invalidate(RenderMath.union_rect(changes, WaveEngine::DOT))
+    Platform.UpdateWindow(@hwnd) if Platform::API_READY
   end
 
   #次のタイマーの間隔を決める（切り替え中は16ミリ秒、表示中は間引く）

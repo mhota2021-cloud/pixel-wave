@@ -1,4 +1,4 @@
-#Windows連携（fiddleでWin32 APIを呼び、win32/registryでレジストリを触る。Windows以外では読み込むだけ）
+﻿#Windows連携（fiddleでWin32 APIを呼び、win32/registryでレジストリを触る。Windows以外では読み込むだけ）
 #ポインタと同じ大きさの値（HWNDやWPARAMやLPARAMやLRESULT）は、必ずvoid*かintptr_tかuintptr_tで受け渡す（longはWindowsでは32ビットしかないため）
 require 'fiddle/import'
 require 'fileutils'
@@ -24,7 +24,7 @@ module Platform
     extern 'int SystemParametersInfoW(unsigned int, unsigned int, void*, unsigned int)'
     extern 'intptr_t GetWindowLongPtrW(void*, int)'
     extern 'intptr_t SetWindowLongPtrW(void*, int, intptr_t)'
-    extern 'int SetLayeredWindowAttributes(void*, unsigned int, unsigned char, unsigned int)'
+    extern 'int SetLayeredWindowAttributes(void*, unsigned int, int, unsigned int)'
     extern 'int GetSystemPowerStatus(void*)'
     #ウィンドウの作成とメッセージ
     extern 'unsigned short RegisterClassExW(void*)'
@@ -154,7 +154,7 @@ module Platform
   #壁紙として貼り付ける（引数hwndは自ウィンドウ、引数xとyは置く場所、引数log_pathは記録の場所）
   #実機でアイコンの後ろに見えた方法：Progmanの直接の子にし、重なり順をSHELLDLL_DefViewのすぐ奥にし、レイヤードにする
   #呼び出しは、ウィンドウを作ったスレッドから行うこと
-  def attach_24h2(hwnd, x, y, log_path)
+  def attach_24h2(hwnd, x, y, w, h, log_path)
     progman = FindWindowW(wide('Progman'), nil)
     raise 'Progmanが見つかりません' if progman.nil? || progman.null?
     result = Fiddle::Pointer.malloc(8)
@@ -168,7 +168,7 @@ module Platform
     SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exstyle | WS_EX_LAYERED)
     SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA)
     SetParent(hwnd, progman)
-    SetWindowPos(hwnd, defview, x, y, 0, 0, 0x0001 | SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED)
+    SetWindowPos(hwnd, defview, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED)
     File.open(log_path, 'a') { |f| f.puts "#{Time.now}: Progmanの子にし、SHELLDLL_DefViewのすぐ奥へ置いた" } rescue nil
     true
   end
