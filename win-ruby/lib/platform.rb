@@ -199,13 +199,14 @@ module Platform
     raise '壁紙ホストWorkerWが見つかりません' if workerw.nil? || workerw.null?
 
     style = GetWindowLongPtrW(hwnd, GWL_STYLE)
-    SetWindowLongPtrW(hwnd, GWL_STYLE, (style & ~WS_POPUP) | WS_CHILD | WS_VISIBLE)
-    exstyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
-    SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exstyle | WS_EX_LAYERED)
+    ws_caption = 0x00C00000
+    ws_thickframe = 0x00040000
+    clean_style = (style & ~WS_POPUP & ~ws_caption & ~ws_thickframe) | WS_CHILD | WS_VISIBLE | 0x04000000 # WS_CLIPSIBLINGS
+    SetWindowLongPtrW(hwnd, GWL_STYLE, clean_style)
     SetParent(hwnd, workerw)
     SetWindowPos(hwnd, nil, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED)
-    ShowWindow(hwnd, 5) # SW_SHOWを明示的に呼び出して可視化を保証
-    File.open(log_path, 'a') { |f| f.puts "#{Time.now}: WorkerW(0x#{workerw.to_i.to_s(16)})の子として壁紙を配置した（ShowWindow完了）" } rescue nil
+    ShowWindow(hwnd, 5)
+    File.open(log_path, 'a') { |f| f.puts "#{Time.now}: WorkerW(0x#{workerw.to_i.to_s(16)})の子として壁紙を配置した（GDI直接描画版）" } rescue nil
     true
   end
   alias attach_24h2 attach_wallpaper

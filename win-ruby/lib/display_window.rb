@@ -45,7 +45,6 @@ class DisplayWindow < NativeWindow
   def start
     attach_wallpaper if @mode == :wallpaper
     advance_frame
-    Platform.update_layered(@hwnd, @buffer.dc, @width, @height) if @mode == :wallpaper
     Platform.UpdateWindow(@hwnd) if Platform::API_READY
     set_timer(TIMER_CHECK, 2000)
     schedule_tick
@@ -99,7 +98,11 @@ class DisplayWindow < NativeWindow
       @buffer.fill(RenderMath.dot_rect(col, row, WaveEngine::DOT, WaveEngine::FILL), rgb)
     end
     if @mode == :wallpaper
-      Platform.update_layered(@hwnd, @buffer.dc, @width, @height)
+      hdc = Platform.GetDC(@hwnd)
+      if hdc && !hdc.null?
+        @buffer.blit_to(hdc)
+        Platform.ReleaseDC(@hwnd, hdc)
+      end
     else
       invalidate(RenderMath.union_rect(changes, WaveEngine::DOT))
       Platform.UpdateWindow(@hwnd) if Platform::API_READY
