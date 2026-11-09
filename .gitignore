@@ -1,0 +1,34 @@
+# Dependencies
+**/node_modules/
+**/vendor/
+**/.bundle/
+
+# Build artifacts
+**/dist/
+**/dist-demo/
+**/build-stage/
+**/target/
+*.exe
+*.scr
+*.dmg
+*.deb
+*.AppImage
+
+# Delivery archives & work folders from Muse
+muse/
+muse2/
+muse3/
+
+# Local/tool configurations & logs
+.claude/
+*.log
+wallpaper.pid
+settings.json
+settings.broken.json
+user-images/
+
+# OS / Editor artifacts
+.DS_Store
+Thumbs.db
+*.swp
+*~

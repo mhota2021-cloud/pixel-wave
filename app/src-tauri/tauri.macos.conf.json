@@ -1,0 +1,11 @@
+{
+  "bundle": {
+    "resources": {
+      "../saver/dist/PixelWaveSaver.saver": "PixelWaveSaver.saver"
+    },
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": "-"
+    }
+  }
+}

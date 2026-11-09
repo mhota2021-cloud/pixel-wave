@@ -1,0 +1,102 @@
+#タグを押したら3つのOSでビルドしてReleasesへ置く（お金のかかる署名は使わない）
+#WindowsはRuby版（win-ruby）をocranでexeにし、macOSとLinuxはTauri版をビルドする
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          working-directory: win-ruby
+          bundler-cache: true
+
+      - name: Windows版（Ruby）をビルドする
+        working-directory: win-ruby
+        shell: pwsh
+        run: ./build.ps1
+
+      - name: スクリーンセーバー用に同じ中身を.scrでも置く
+        working-directory: win-ruby
+        shell: pwsh
+        run: Copy-Item PixelWave.exe PixelWave.scr
+
+      - name: Releasesへ置く（無ければ下書きを作る）
+        working-directory: win-ruby
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release view "${{ github.ref_name }}" 2>$null
+          if ($LASTEXITCODE -ne 0) { gh release create "${{ github.ref_name }}" --title "Pixel Wave ${{ github.ref_name }}" --notes "" }
+          gh release upload "${{ github.ref_name }}" PixelWave.exe PixelWave.scr --clobber
+
+  build:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-latest
+            args: "--target universal-apple-darwin --bundles app"
+          - os: ubuntu-24.04
+            args: "--bundles appimage,deb"
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.os == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Linuxのビルドに必要な部品を入れる
+        if: matrix.os == 'ubuntu-24.04'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libgtk-3-dev libayatana-appindicator3-dev librsvg2-dev libsoup-3.0-dev libjavascriptcoregtk-4.1-dev patchelf libxdo-dev libssl-dev
+
+      - name: 描画エンジンをビルドする
+        working-directory: engine
+        run: |
+          npm ci
+          npm run build
+
+      - name: macOSのスクリーンセーバーをビルドする
+        if: matrix.os == 'macos-latest'
+        working-directory: app/saver
+        run: ./build.sh
+
+      - name: アプリをビルドしてReleasesへ置く
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          projectPath: app
+          tagName: ${{ github.ref_name }}
+          releaseName: "Pixel Wave ${{ github.ref_name }}"
+          args: ${{ matrix.args }}
+
+      - name: macOS用にアプリとセーバーを入れたDMGを作って足す
+        if: matrix.os == 'macos-latest'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          STAGE=$(mktemp -d)
+          cp -R "app/src-tauri/target/universal-apple-darwin/release/bundle/macos/Pixel Wave.app" "$STAGE/"
+          cp -R app/saver/dist/PixelWaveSaver.saver "$STAGE/"
+          cp app/scripts/使い方-macOS.txt "$STAGE/使い方.txt"
+          hdiutil create -volname "Pixel Wave" -srcfolder "$STAGE" -ov -format UDZO PixelWave-macOS.dmg
+          gh release upload "${{ github.ref_name }}" PixelWave-macOS.dmg --clobber
