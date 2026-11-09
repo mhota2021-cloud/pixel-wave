@@ -165,16 +165,23 @@ module Platform
     defview = FindWindowExW(progman, nil, wide('SHELLDLL_DefView'), nil)
     raise 'SHELLDLL_DefViewが見つかりません' if defview.nil? || defview.null?
 
-    style = GetWindowLongPtrW(hwnd, GWL_STYLE)
-    SetWindowLongPtrW(hwnd, GWL_STYLE, (style & ~WS_POPUP & ~0x00C00000 & ~0x00040000) | WS_CHILD | WS_VISIBLE | 0x04000000)
-    SetParent(hwnd, progman)
+    # 1. トップレベルウィンドウの段階でレイヤード属性を確実に付与・設定する（子ウィンドウ化後はAPIが失敗するため）
     exstyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
     SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exstyle | WS_EX_LAYERED)
     res_layered = SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA)
+    err_layered = GetLastError()
+
+    # 2. 子ウィンドウのスタイルに変更してProgmanの直接の子にする
+    style = GetWindowLongPtrW(hwnd, GWL_STYLE)
+    SetWindowLongPtrW(hwnd, GWL_STYLE, (style & ~WS_POPUP & ~0x00C00000 & ~0x00040000) | WS_CHILD | WS_VISIBLE | 0x04000000)
+    SetParent(hwnd, progman)
+
+    # 3. SHELLDLL_DefView（アイコン層）のすぐ奥に配置する
     SetWindowPos(hwnd, defview, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED)
     InvalidateRect(hwnd, nil, 1)
     UpdateWindow(hwnd)
-    File.open(log_path, 'a') { |f| f.puts "#{Time.now}: Progmanの子にし、SHELLDLL_DefViewのすぐ奥へ置いた (layered=#{res_layered})" } rescue nil
+
+    File.open(log_path, 'a') { |f| f.puts "#{Time.now}: Progmanの子にし、SHELLDLL_DefViewのすぐ奥へ置いた (layered=#{res_layered}, err=#{err_layered})" } rescue nil
     true
   end
   alias attach_24h2 attach_wallpaper
