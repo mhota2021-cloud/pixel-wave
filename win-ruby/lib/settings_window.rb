@@ -130,6 +130,7 @@ class SettingsWindow < NativeWindow
     grids = Loader.grids(list, cols, rows, Platform.cache_dir, Wic.method(:decode))
     @engine = WaveEngine.new(grids, cols, rows)
     @preview_cols = cols
+    @preview_rows = rows
     @dot_colors = {}
     @engine.request_full_redraw
     apply_preview_changes(@engine.frame(@engine_time))
@@ -150,7 +151,8 @@ class SettingsWindow < NativeWindow
   def apply_preview_changes(changes)
     return if changes.nil? || changes.empty?
     rects, _cards = SettingsLayout.layout(@width, @height, items.length, @scroll)
-    px, py = rects[:preview][0], rects[:preview][1]
+    px = @preview_offset_x || rects[:preview][0]
+    py = @preview_offset_y || rects[:preview][1]
     changes.each do |col, row, rgb|
       @dot_colors[row * @preview_cols + col] = rgb
       x, y, w, h = RenderMath.dot_rect(col, row, WaveEngine::DOT, WaveEngine::FILL)
@@ -187,8 +189,9 @@ class SettingsWindow < NativeWindow
     @buffer.fill([x, y, w, h], BG)
     ox = @preview_offset_x || x
     oy = @preview_offset_y || y
-    #16:9の表示領域の内側を少し濃い背景で塗る
-    @buffer.fill([ox, oy, @preview_cols * WaveEngine::DOT, (@dot_colors.empty? ? 0 : (@dot_colors.keys.max / @preview_cols + 1)) * WaveEngine::DOT], PREVIEW_BG) if @preview_cols
+    pw = (@preview_cols || 1) * WaveEngine::DOT
+    ph = (@preview_rows || 1) * WaveEngine::DOT
+    @buffer.fill([ox, oy, pw, ph], PREVIEW_BG)
     @dot_colors.each do |i, rgb|
       col = i % @preview_cols
       row = i / @preview_cols
