@@ -161,7 +161,29 @@ def find_workerw(log_path = nil)
     SendMessageTimeoutW(progman, 0x052C, 0xD, 0, 0, 1000, result)
     SendMessageTimeoutW(progman, 0x052C, 0xD, 1, 0, 1000, result)
 
-    #方法1 (標準): SHELLDLL_DefViewを持つトップレベルウィンドウの次の兄弟WorkerW
+    #Progmanの子ウィンドウをすべてダンプ
+    if log_path
+      File.open(log_path, 'a') do |f|
+        f.puts "#{Time.now}: --- Progman(0x#{progman.to_i.to_s(16)})子ウィンドウ一覧 ---"
+        child = nil
+        loop do
+          child = FindWindowExW(progman, child, nil, nil)
+          break if child.nil? || child.null?
+          cname = class_name(child)
+          f.puts "    子: 0x#{child.to_i.to_s(16)}, class=#{cname}"
+        end
+        f.puts "#{Time.now}: --- トップレベルWorkerW一覧 ---"
+        top_w = nil
+        loop do
+          top_w = FindWindowExW(nil, top_w, wide('WorkerW'), nil)
+          break if top_w.nil? || top_w.null?
+          sub_defview = FindWindowExW(top_w, nil, wide('SHELLDLL_DefView'), nil)
+          f.puts "    トップWorkerW: 0x#{top_w.to_i.to_s(16)}, has_defview=#{!sub_defview.nil? && !sub_defview.null?}"
+        end
+      end rescue nil
+    end
+
+    #方法1: SHELLDLL_DefViewを持つトップレベルウィンドウの次の兄弟WorkerW
     target_workerw = nil
     defview_parent = nil
     callback = Fiddle::Closure::BlockCaller.new(Fiddle::TYPE_INT, [Fiddle::TYPE_VOIDP, Fiddle::TYPE_INTPTR_T]) do |top_hwnd, _lparam|
@@ -181,7 +203,7 @@ def find_workerw(log_path = nil)
       return target_workerw
     end
 
-    #方法2 (Windows 11): Progmanの直接の子にWorkerWがいる構成
+    #方法2: Progmanの直接の子にWorkerWがいる構成
     workerw = FindWindowExW(progman, nil, wide('WorkerW'), nil)
     if workerw && !workerw.null?
       File.open(log_path, 'a') { |f| f.puts "#{Time.now}: [探索] Progmanの子WorkerW(0x#{workerw.to_i.to_s(16)})を発見" } rescue nil if log_path
