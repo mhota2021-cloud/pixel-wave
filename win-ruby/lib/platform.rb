@@ -153,53 +153,65 @@ module Platform
   end
 
 #壁紙用の受け皿ウィンドウ（WorkerW）を探す（Lively Wallpaperの手法）
-def find_workerw
-  progman = FindWindowW(wide('Progman'), nil)
-  raise 'Progmanが見つかりません' if progman.nil? || progman.null?
+def find_workerw(log_path = nil)
+    progman = FindWindowW(wide('Progman'), nil)
+    raise 'Progmanが見つかりません' if progman.nil? || progman.null?
 
-  result = Fiddle::Pointer.malloc(8)
-  SendMessageTimeoutW(progman, 0x052C, 0xD, 0, 0, 1000, result)
-  SendMessageTimeoutW(progman, 0x052C, 0xD, 1, 0, 1000, result)
+    result = Fiddle::Pointer.malloc(8)
+    SendMessageTimeoutW(progman, 0x052C, 0xD, 0, 0, 1000, result)
+    SendMessageTimeoutW(progman, 0x052C, 0xD, 1, 0, 1000, result)
 
-  #方法1: Windows 11（Progmanの直接の子にWorkerWがいる構成）
-  workerw = FindWindowExW(progman, nil, wide('WorkerW'), nil)
-  return workerw if workerw && !workerw.null?
-
-  #方法2: Windows 10 / 11（SHELLDLL_DefViewを持つウィンドウの次の兄弟WorkerW）
-  target_workerw = nil
-  callback = Fiddle::Closure::BlockCaller.new(Fiddle::TYPE_INT, [Fiddle::TYPE_VOIDP, Fiddle::TYPE_INTPTR_T]) do |top_hwnd, _lparam|
-    defview = FindWindowExW(top_hwnd, nil, wide('SHELLDLL_DefView'), nil)
-    if defview && !defview.null?
-      target_workerw = FindWindowExW(nil, top_hwnd, wide('WorkerW'), nil)
-      0
-    else
-      1
+    #方法1 (標準): SHELLDLL_DefViewを持つトップレベルウィンドウの次の兄弟WorkerW
+    target_workerw = nil
+    defview_parent = nil
+    callback = Fiddle::Closure::BlockCaller.new(Fiddle::TYPE_INT, [Fiddle::TYPE_VOIDP, Fiddle::TYPE_INTPTR_T]) do |top_hwnd, _lparam|
+      defview = FindWindowExW(top_hwnd, nil, wide('SHELLDLL_DefView'), nil)
+      if defview && !defview.null?
+        defview_parent = top_hwnd
+        target_workerw = FindWindowExW(nil, top_hwnd, wide('WorkerW'), nil)
+        0
+      else
+        1
+      end
     end
+    EnumWindows(callback, 0)
+
+    if target_workerw && !target_workerw.null?
+      File.open(log_path, 'a') { |f| f.puts "#{Time.now}: [探索] DefView親(0x#{defview_parent.to_i.to_s(16)})の次のトップレベルWorkerW(0x#{target_workerw.to_i.to_s(16)})を発見" } rescue nil if log_path
+      return target_workerw
+    end
+
+    #方法2 (Windows 11): Progmanの直接の子にWorkerWがいる構成
+    workerw = FindWindowExW(progman, nil, wide('WorkerW'), nil)
+    if workerw && !workerw.null?
+      File.open(log_path, 'a') { |f| f.puts "#{Time.now}: [探索] Progmanの子WorkerW(0x#{workerw.to_i.to_s(16)})を発見" } rescue nil if log_path
+      return workerw
+    end
+
+    #フォールバック: Progman自身
+    File.open(log_path, 'a') { |f| f.puts "#{Time.now}: [探索] フォールバックでProgman自身を使用" } rescue nil if log_path
+    progman
   end
-  EnumWindows(callback, 0)
-  return target_workerw if target_workerw && !target_workerw.null?
 
-  #フォールバック: Progman自身
-  progman
-end
+  #壁紙として貼り付ける（引数hwndは自ウィンドウ、引数xとyは置く場所、引数wとhは大きさ、引数log_pathは記録の場所）
+  def attach_wallpaper(hwnd, x, y, w, h, log_path)
+    host = find_workerw(log_path)
+    raise '壁紙の配置先ウィンドウが見つかりません' if host.nil? || host.null?
 
-#壁紙として貼り付ける（引数hwndは自ウィンドウ、引数xとyは置く場所、引数wとhは大きさ、引数log_pathは記録の場所）
-def attach_wallpaper(hwnd, x, y, w, h, log_path)
-  host = find_workerw
-  raise '壁紙の配置先ウィンドウが見つかりません' if host.nil? || host.null?
+    ShowWindow(host, 5) # SW_SHOW = 5
 
-  #子ウィンドウのスタイルに変更してWorkerWの子にする
-  style = GetWindowLongPtrW(hwnd, GWL_STYLE)
-  SetWindowLongPtrW(hwnd, GWL_STYLE, (style & ~WS_POPUP & ~0x00C00000 & ~0x00040000) | WS_CHILD | WS_VISIBLE | 0x04000000)
-  SetParent(hwnd, host)
-  SetWindowPos(hwnd, nil, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED)
-  InvalidateRect(hwnd, nil, 1)
-  UpdateWindow(hwnd)
+    #子ウィンドウのスタイルに変更してWorkerWの子にする
+    style = GetWindowLongPtrW(hwnd, GWL_STYLE)
+    SetWindowLongPtrW(hwnd, GWL_STYLE, (style & ~WS_POPUP & ~0x00C00000 & ~0x00040000) | WS_CHILD | WS_VISIBLE | 0x04000000)
+    SetParent(hwnd, host)
+    SetWindowPos(hwnd, nil, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED)
+    InvalidateRect(hwnd, nil, 1)
+    UpdateWindow(hwnd)
 
-  File.open(log_path, 'a') { |f| f.puts "#{Time.now}: ホスト(0x#{host.to_i.to_s(16)}, クラス=#{class_name(host)})の子として配置した" } rescue nil
-  true
-end
-alias attach_24h2 attach_wallpaper
+    File.open(log_path, 'a') { |f| f.puts "#{Time.now}: ホスト(0x#{host.to_i.to_s(16)}, クラス=#{class_name(host)})の子として配置完了" } rescue nil
+    true
+  end
+  alias attach_24h2 attach_wallpaper
 
   #前面のアプリが全画面か調べる（引数own_hwndは自ウィンドウで、自分は除く）
   def foreground_fullscreen?(own_hwnd)
