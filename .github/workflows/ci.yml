@@ -35,6 +35,12 @@ jobs:
           npm ci
           npm test
 
+      - name: macOSのスクリーンセーバーを準備する
+        if: matrix.os == 'macos-latest'
+        run: |
+          cd engine && npm run build
+          cd ../app/saver && ./build.sh
+
       - name: アプリの画面の型チェック
         working-directory: app
         run: |
