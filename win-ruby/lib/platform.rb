@@ -154,7 +154,9 @@ module Platform
 
 #壁紙として貼り付ける（引数hwndは自ウィンドウ、引数xとyは置く場所、引数wとhは大きさ、引数log_pathは記録の場所）
   #Windows 11 24H2の階層構造に対応：
-  #Progmanの子ウィンドウとして配置し、アイコン層（SHELLDLL_DefView）の直後、壁紙レンダラー層（WorkerW）の手前に挟み込む
+  #1. 競合する壁紙描画WorkerWを非表示にする
+  #2. ProgmanにWS_CLIPCHILDRENを付与して子ウィンドウ領域を保護する
+  #3. レイヤードを排した通常のGDI可視子ウィンドウとしてProgmanの子にし、defview直後に配置する
   def attach_wallpaper(hwnd, x, y, w, h, log_path)
     progman = FindWindowW(wide('Progman'), nil)
     raise 'Progmanが見つかりません' if progman.nil? || progman.null?
@@ -166,23 +168,29 @@ module Platform
     defview = FindWindowExW(progman, nil, wide('SHELLDLL_DefView'), nil)
     raise 'SHELLDLL_DefViewが見つかりません' if defview.nil? || defview.null?
 
-    #1. トップレベルウィンドウの段階でレイヤード属性を設定（DWM合成を保証）
-    exstyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
-    SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exstyle | WS_EX_LAYERED)
-    res_layered = SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA)
-    err_layered = GetLastError()
+    #1. 競合する壁紙WorkerWがあれば非表示にする
+    workerw = FindWindowExW(progman, nil, wide('WorkerW'), nil)
+    workerw_hidden = false
+    if workerw && !workerw.null?
+      ShowWindow(workerw, 0)
+      workerw_hidden = true
+    end
 
-    #2. 子ウィンドウのスタイルに変更してProgmanの直接の子にする
+    #2. ProgmanにWS_CLIPCHILDRENを付与
+    progman_style = GetWindowLongPtrW(progman, GWL_STYLE)
+    SetWindowLongPtrW(progman, GWL_STYLE, progman_style | 0x02000000)
+
+    #3. 通常のGDI子ウィンドウとしてProgmanの子にする
     style = GetWindowLongPtrW(hwnd, GWL_STYLE)
     SetWindowLongPtrW(hwnd, GWL_STYLE, (style & ~WS_POPUP & ~0x00C00000 & ~0x00040000) | WS_CHILD | WS_VISIBLE | 0x04000000)
     SetParent(hwnd, progman)
 
-    #3. アイコン層（defview）の直後、壁紙レンダラー（WorkerW）の手前に配置
+    #4. アイコン層（defview）の直後に配置
     SetWindowPos(hwnd, defview, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED)
     InvalidateRect(hwnd, nil, 1)
     UpdateWindow(hwnd)
 
-    File.open(log_path, 'a') { |f| f.puts "#{Time.now}: Progmanの子にし、defview直後へ配置 (layered=#{res_layered}, err=#{err_layered})" } rescue nil
+    File.open(log_path, 'a') { |f| f.puts "#{Time.now}: Progmanの子にし、defview直後へ配置（WorkerW非表示=#{workerw_hidden}）" } rescue nil
     true
   end
   alias attach_24h2 attach_wallpaper
@@ -461,6 +469,11 @@ module Platform
       SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, ptr, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE)
     end
 
+    progman = FindWindowW(wide('Progman'), nil)
+    if progman && !progman.null?
+      workerw = FindWindowExW(progman, nil, wide('WorkerW'), nil)
+      ShowWindow(workerw, 5) if workerw && !workerw.null?
+    end
     File.delete(path) rescue nil
     true
   rescue StandardError => e
