@@ -195,18 +195,23 @@ module Platform
   #壁紙として貼り付ける（引数hwndは自ウィンドウ、引数xとyは置く場所、引数wとhは大きさ、引数log_pathは記録の場所）
   #Lively Wallpaperと同様、デスクトップ壁紙のWorkerWの子ウィンドウとして配置する
   def attach_wallpaper(hwnd, x, y, w, h, log_path)
-    workerw = find_workerw
-    raise '壁紙ホストWorkerWが見つかりません' if workerw.nil? || workerw.null?
+    progman = FindWindowW(wide('Progman'), nil)
+    raise 'Progmanが見つかりません' if progman.nil? || progman.null?
+
+    result = Fiddle::Pointer.malloc(8)
+    SendMessageTimeoutW(progman, 0x052C, 0xD, 0, 0, 1000, result)
+    SendMessageTimeoutW(progman, 0x052C, 0xD, 1, 0, 1000, result)
+
+    defview = FindWindowExW(progman, nil, wide('SHELLDLL_DefView'), nil)
+    raise 'SHELLDLL_DefViewが見つかりません' if defview.nil? || defview.null?
 
     style = GetWindowLongPtrW(hwnd, GWL_STYLE)
-    ws_caption = 0x00C00000
-    ws_thickframe = 0x00040000
-    clean_style = (style & ~WS_POPUP & ~ws_caption & ~ws_thickframe) | WS_CHILD | WS_VISIBLE | 0x04000000 # WS_CLIPSIBLINGS
-    SetWindowLongPtrW(hwnd, GWL_STYLE, clean_style)
-    SetParent(hwnd, workerw)
-    SetWindowPos(hwnd, nil, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED)
-    ShowWindow(hwnd, 5)
-    File.open(log_path, 'a') { |f| f.puts "#{Time.now}: WorkerW(0x#{workerw.to_i.to_s(16)})の子として壁紙を配置した（GDI直接描画版）" } rescue nil
+    SetWindowLongPtrW(hwnd, GWL_STYLE, (style & ~WS_POPUP) | WS_CHILD | WS_VISIBLE)
+    exstyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
+    SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exstyle | WS_EX_LAYERED)
+    SetParent(hwnd, progman)
+    SetWindowPos(hwnd, defview, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED)
+    File.open(log_path, 'a') { |f| f.puts "#{Time.now}: Progmanの子にし、SHELLDLL_DefViewのすぐ奥へ置いた" } rescue nil
     true
   end
   alias attach_24h2 attach_wallpaper

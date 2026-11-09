@@ -44,7 +44,12 @@ class DisplayWindow < NativeWindow
   #表示を始める（壁紙の貼り付けは、ウィンドウを作ったこのスレッドで行う）
   def start
     attach_wallpaper if @mode == :wallpaper
+    @engine.request_full_redraw
     advance_frame
+    if @mode == :wallpaper
+      res = Platform.update_layered(@hwnd, @buffer.dc, @width, @height)
+      File.open(File.join(Platform.data_dir, 'wallpaper.log'), 'a') { |f| f.puts "#{Time.now}: 初回 update_layered res=#{res}" } rescue nil
+    end
     Platform.UpdateWindow(@hwnd) if Platform::API_READY
     set_timer(TIMER_CHECK, 2000)
     schedule_tick
@@ -98,11 +103,7 @@ class DisplayWindow < NativeWindow
       @buffer.fill(RenderMath.dot_rect(col, row, WaveEngine::DOT, WaveEngine::FILL), rgb)
     end
     if @mode == :wallpaper
-      hdc = Platform.GetDC(@hwnd)
-      if hdc && !hdc.null?
-        @buffer.blit_to(hdc)
-        Platform.ReleaseDC(@hwnd, hdc)
-      end
+      Platform.update_layered(@hwnd, @buffer.dc, @width, @height)
     else
       invalidate(RenderMath.union_rect(changes, WaveEngine::DOT))
       Platform.UpdateWindow(@hwnd) if Platform::API_READY
