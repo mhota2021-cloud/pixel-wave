@@ -46,6 +46,7 @@ class DisplayWindow < NativeWindow
     attach_wallpaper if @mode == :wallpaper
     @engine.request_full_redraw
     advance_frame
+    invalidate(nil)
     Platform.UpdateWindow(@hwnd) if Platform::API_READY
     set_timer(TIMER_CHECK, 2000)
     schedule_tick

@@ -152,40 +152,54 @@ module Platform
     ''
   end
 
-    #壁紙として貼り付ける（引数hwndは自ウィンドウ、引数xとyは置く場所、引数wとhは大きさ、引数log_pathは記録の場所）
-  #実機でアイコンの後ろに見えた方法：Progmanの直接の子にし、重なり順をSHELLDLL_DefViewのすぐ奥にし、レイヤードにする
-  #呼び出しは、ウィンドウを作ったスレッドから行うこと
-  def attach_wallpaper(hwnd, x, y, w, h, log_path)
-    progman = FindWindowW(wide('Progman'), nil)
-    raise 'Progmanが見つかりません' if progman.nil? || progman.null?
+#壁紙用の受け皿ウィンドウ（WorkerW）を探す（Lively Wallpaperの手法）
+def find_workerw
+  progman = FindWindowW(wide('Progman'), nil)
+  raise 'Progmanが見つかりません' if progman.nil? || progman.null?
 
-    result = Fiddle::Pointer.malloc(8)
-    SendMessageTimeoutW(progman, 0x052C, 0xD, 0, 0, 1000, result)
-    SendMessageTimeoutW(progman, 0x052C, 0xD, 1, 0, 1000, result)
+  result = Fiddle::Pointer.malloc(8)
+  SendMessageTimeoutW(progman, 0x052C, 0xD, 0, 0, 1000, result)
+  SendMessageTimeoutW(progman, 0x052C, 0xD, 1, 0, 1000, result)
 
-    defview = FindWindowExW(progman, nil, wide('SHELLDLL_DefView'), nil)
-    raise 'SHELLDLL_DefViewが見つかりません' if defview.nil? || defview.null?
+  #方法1: Windows 11（Progmanの直接の子にWorkerWがいる構成）
+  workerw = FindWindowExW(progman, nil, wide('WorkerW'), nil)
+  return workerw if workerw && !workerw.null?
 
-    # 1. トップレベルウィンドウの段階でレイヤード属性を確実に付与・設定する（子ウィンドウ化後はAPIが失敗するため）
-    exstyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
-    SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exstyle | WS_EX_LAYERED)
-    res_layered = SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA)
-    err_layered = GetLastError()
-
-    # 2. 子ウィンドウのスタイルに変更してProgmanの直接の子にする
-    style = GetWindowLongPtrW(hwnd, GWL_STYLE)
-    SetWindowLongPtrW(hwnd, GWL_STYLE, (style & ~WS_POPUP & ~0x00C00000 & ~0x00040000) | WS_CHILD | WS_VISIBLE | 0x04000000)
-    SetParent(hwnd, progman)
-
-    # 3. SHELLDLL_DefView（アイコン層）のすぐ奥に配置する
-    SetWindowPos(hwnd, defview, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED)
-    InvalidateRect(hwnd, nil, 1)
-    UpdateWindow(hwnd)
-
-    File.open(log_path, 'a') { |f| f.puts "#{Time.now}: Progmanの子にし、SHELLDLL_DefViewのすぐ奥へ置いた (layered=#{res_layered}, err=#{err_layered})" } rescue nil
-    true
+  #方法2: Windows 10 / 11（SHELLDLL_DefViewを持つウィンドウの次の兄弟WorkerW）
+  target_workerw = nil
+  callback = Fiddle::Closure::BlockCaller.new(Fiddle::TYPE_INT, [Fiddle::TYPE_VOIDP, Fiddle::TYPE_INTPTR_T]) do |top_hwnd, _lparam|
+    defview = FindWindowExW(top_hwnd, nil, wide('SHELLDLL_DefView'), nil)
+    if defview && !defview.null?
+      target_workerw = FindWindowExW(nil, top_hwnd, wide('WorkerW'), nil)
+      0
+    else
+      1
+    end
   end
-  alias attach_24h2 attach_wallpaper
+  EnumWindows(callback, 0)
+  return target_workerw if target_workerw && !target_workerw.null?
+
+  #フォールバック: Progman自身
+  progman
+end
+
+#壁紙として貼り付ける（引数hwndは自ウィンドウ、引数xとyは置く場所、引数wとhは大きさ、引数log_pathは記録の場所）
+def attach_wallpaper(hwnd, x, y, w, h, log_path)
+  host = find_workerw
+  raise '壁紙の配置先ウィンドウが見つかりません' if host.nil? || host.null?
+
+  #子ウィンドウのスタイルに変更してWorkerWの子にする
+  style = GetWindowLongPtrW(hwnd, GWL_STYLE)
+  SetWindowLongPtrW(hwnd, GWL_STYLE, (style & ~WS_POPUP & ~0x00C00000 & ~0x00040000) | WS_CHILD | WS_VISIBLE | 0x04000000)
+  SetParent(hwnd, host)
+  SetWindowPos(hwnd, nil, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED)
+  InvalidateRect(hwnd, nil, 1)
+  UpdateWindow(hwnd)
+
+  File.open(log_path, 'a') { |f| f.puts "#{Time.now}: ホスト(0x#{host.to_i.to_s(16)}, クラス=#{class_name(host)})の子として配置した" } rescue nil
+  true
+end
+alias attach_24h2 attach_wallpaper
 
   #前面のアプリが全画面か調べる（引数own_hwndは自ウィンドウで、自分は除く）
   def foreground_fullscreen?(own_hwnd)
