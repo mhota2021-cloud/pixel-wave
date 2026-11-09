@@ -1,4 +1,4 @@
-﻿#表示ウィンドウ（壁紙とスクリーンセーバーで共用。GDIで描く）
+#表示ウィンドウ（壁紙とスクリーンセーバーで共用。GDIで描く）
 #裏画面に変わったドットだけを塗り、WM_PAINTでは写すだけにする
 require_relative 'window'
 require_relative 'engine'
@@ -16,7 +16,7 @@ class DisplayWindow < NativeWindow
     @mode = mode
     if mode == :wallpaper
       x, y, w, h = Platform::API_READY ? Platform.virtual_screen : [0, 0, 1280, 720]
-      ex_style = 0
+      ex_style = Platform::WS_EX_LAYERED
     else
       x = 0
       y = 0

@@ -1,4 +1,4 @@
-﻿#Windows連携（fiddleでWin32 APIを呼び、win32/registryでレジストリを触る。Windows以外では読み込むだけ）
+#Windows連携（fiddleでWin32 APIを呼び、win32/registryでレジストリを触る。Windows以外では読み込むだけ）
 #ポインタと同じ大きさの値（HWNDやWPARAMやLPARAMやLRESULT）は、必ずvoid*かintptr_tかuintptr_tで受け渡す（longはWindowsでは32ビットしかないため）
 require 'fiddle/import'
 require 'fileutils'
@@ -168,19 +168,20 @@ module Platform
     defview = FindWindowExW(progman, nil, wide('SHELLDLL_DefView'), nil)
     raise 'SHELLDLL_DefViewが見つかりません' if defview.nil? || defview.null?
 
-    #1. 競合する壁紙WorkerWがあれば非表示にする
+    #1. WorkerWが表示されていることを保証する
     workerw = FindWindowExW(progman, nil, wide('WorkerW'), nil)
-    workerw_hidden = false
-    if workerw && !workerw.null?
-      ShowWindow(workerw, 0)
-      workerw_hidden = true
-    end
+
+
+    ShowWindow(workerw, 5) if workerw && !workerw.null?
 
     #2. ProgmanにWS_CLIPCHILDRENを付与
     progman_style = GetWindowLongPtrW(progman, GWL_STYLE)
     SetWindowLongPtrW(progman, GWL_STYLE, progman_style | 0x02000000)
 
-    #3. 通常のGDI子ウィンドウとしてProgmanの子にする
+    #3. レイヤード不透明ウィンドウとしてProgmanの子にする
+    ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
+    SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED)
+    SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA)
     style = GetWindowLongPtrW(hwnd, GWL_STYLE)
     SetWindowLongPtrW(hwnd, GWL_STYLE, (style & ~WS_POPUP & ~0x00C00000 & ~0x00040000) | WS_CHILD | WS_VISIBLE | 0x04000000)
     SetParent(hwnd, progman)
@@ -190,7 +191,7 @@ module Platform
     InvalidateRect(hwnd, nil, 1)
     UpdateWindow(hwnd)
 
-    File.open(log_path, 'a') { |f| f.puts "#{Time.now}: Progmanの子にし、defview直後へ配置（WorkerW非表示=#{workerw_hidden}）" } rescue nil
+    File.open(log_path, 'a') { |f| f.puts "#{Time.now}: Progmanの子にし、defview直後へ配置（レイヤード不透明、WorkerW表示）" } rescue nil
     true
   end
   alias attach_24h2 attach_wallpaper
