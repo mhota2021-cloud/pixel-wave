@@ -131,7 +131,8 @@ class DisplayWindow < NativeWindow
     @last_tick_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     return unless Platform::API_READY
     was_paused = @paused
-    battery_paused = @pause_on_battery && Platform.battery_powered?\n    @paused = Platform.foreground_fullscreen?(@hwnd) || battery_paused
+    battery_paused = @pause_on_battery && Platform.battery_powered?
+    @paused = Platform.foreground_fullscreen?(@hwnd) || battery_paused
     if was_paused && !@paused
       advance_frame
       schedule_tick
