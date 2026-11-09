@@ -24,8 +24,7 @@ module Platform
     extern 'int SystemParametersInfoW(unsigned int, unsigned int, void*, unsigned int)'
     extern 'intptr_t GetWindowLongPtrW(void*, int)'
     extern 'intptr_t SetWindowLongPtrW(void*, int, intptr_t)'
-    extern 'int UpdateLayeredWindow(void*, void*, void*, void*, void*, void*, unsigned int, void*, unsigned int)'
-    extern 'int SetLayeredWindowAttributes(void*, unsigned int, int, unsigned int)'
+    extern 'int SetLayeredWindowAttributes(void*, unsigned int, unsigned char, unsigned int)'
     extern 'int GetSystemPowerStatus(void*)'
     #ウィンドウの作成とメッセージ
     extern 'unsigned short RegisterClassExW(void*)'
@@ -152,48 +151,9 @@ module Platform
     ''
   end
 
-  #壁紙として貼り付ける（引数hwndは自ウィンドウ、引数xとyは置く場所、引数log_pathは記録の場所）
+    #壁紙として貼り付ける（引数hwndは自ウィンドウ、引数xとyは置く場所、引数wとhは大きさ、引数log_pathは記録の場所）
   #実機でアイコンの後ろに見えた方法：Progmanの直接の子にし、重なり順をSHELLDLL_DefViewのすぐ奥にし、レイヤードにする
   #呼び出しは、ウィンドウを作ったスレッドから行うこと
-  #レイヤードウィンドウの画面を更新する（引数hwndはウィンドウ、引数hdc_srcは裏画面DC、引数wとhは大きさ、引数xとyは位置）
-  def update_layered(hwnd, hdc_src, w, h, x = 0, y = 0)
-    pt_dst = [x, y].pack('l<2')
-    sz = [w, h].pack('l<2')
-    pt_src = [0, 0].pack('l<2')
-    blend = [0, 0, 255, 0].pack('CCCC')
-    res = UpdateLayeredWindow(hwnd, nil, pt_dst, sz, hdc_src, pt_src, 0, blend, 2)
-    res != 0
-  end
-  #壁紙用の受け皿ウィンドウ（WorkerW）を探す（Lively Wallpaperと同様の手法）
-  def find_workerw
-    progman = FindWindowW(wide('Progman'), nil)
-    raise 'Progmanが見つかりません' if progman.nil? || progman.null?
-
-    result = Fiddle::Pointer.malloc(8)
-    SendMessageTimeoutW(progman, 0x052C, 0xD, 0, 0, 1000, result)
-    SendMessageTimeoutW(progman, 0x052C, 0xD, 1, 0, 1000, result)
-
-    #方法1: Windows 11 24H2以降（Progmanの直接の子にWorkerWがいる）
-    workerw = FindWindowExW(progman, nil, wide('WorkerW'), nil)
-    return workerw if workerw && !workerw.null?
-
-    #方法2: Windows 10 / 以前のWindows 11（SHELLDLL_DefViewの背後にあるトップレベルWorkerW）
-    target_workerw = nil
-    callback = Fiddle::Closure::BlockCaller.new(Fiddle::TYPE_INT, [Fiddle::TYPE_VOIDP, Fiddle::TYPE_INTPTR_T]) do |hwnd, _lparam|
-      defview = FindWindowExW(hwnd, nil, wide('SHELLDLL_DefView'), nil)
-      if defview && !defview.null?
-        target_workerw = FindWindowExW(nil, hwnd, wide('WorkerW'), nil)
-        0
-      else
-        1
-      end
-    end
-    EnumWindows(callback, 0)
-    target_workerw
-  end
-
-  #壁紙として貼り付ける（引数hwndは自ウィンドウ、引数xとyは置く場所、引数wとhは大きさ、引数log_pathは記録の場所）
-  #Lively Wallpaperと同様、デスクトップ壁紙のWorkerWの子ウィンドウとして配置する
   def attach_wallpaper(hwnd, x, y, w, h, log_path)
     progman = FindWindowW(wide('Progman'), nil)
     raise 'Progmanが見つかりません' if progman.nil? || progman.null?
@@ -206,12 +166,15 @@ module Platform
     raise 'SHELLDLL_DefViewが見つかりません' if defview.nil? || defview.null?
 
     style = GetWindowLongPtrW(hwnd, GWL_STYLE)
-    SetWindowLongPtrW(hwnd, GWL_STYLE, (style & ~WS_POPUP) | WS_CHILD | WS_VISIBLE)
+    SetWindowLongPtrW(hwnd, GWL_STYLE, (style & ~WS_POPUP & ~0x00C00000 & ~0x00040000) | WS_CHILD | WS_VISIBLE | 0x04000000)
+    SetParent(hwnd, progman)
     exstyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
     SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exstyle | WS_EX_LAYERED)
-    SetParent(hwnd, progman)
+    res_layered = SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA)
     SetWindowPos(hwnd, defview, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED)
-    File.open(log_path, 'a') { |f| f.puts "#{Time.now}: Progmanの子にし、SHELLDLL_DefViewのすぐ奥へ置いた" } rescue nil
+    InvalidateRect(hwnd, nil, 1)
+    UpdateWindow(hwnd)
+    File.open(log_path, 'a') { |f| f.puts "#{Time.now}: Progmanの子にし、SHELLDLL_DefViewのすぐ奥へ置いた (layered=#{res_layered})" } rescue nil
     true
   end
   alias attach_24h2 attach_wallpaper

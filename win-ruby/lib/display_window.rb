@@ -46,10 +46,6 @@ class DisplayWindow < NativeWindow
     attach_wallpaper if @mode == :wallpaper
     @engine.request_full_redraw
     advance_frame
-    if @mode == :wallpaper
-      res = Platform.update_layered(@hwnd, @buffer.dc, @width, @height)
-      File.open(File.join(Platform.data_dir, 'wallpaper.log'), 'a') { |f| f.puts "#{Time.now}: 初回 update_layered res=#{res}" } rescue nil
-    end
     Platform.UpdateWindow(@hwnd) if Platform::API_READY
     set_timer(TIMER_CHECK, 2000)
     schedule_tick
@@ -102,12 +98,8 @@ class DisplayWindow < NativeWindow
     changes.each do |col, row, rgb|
       @buffer.fill(RenderMath.dot_rect(col, row, WaveEngine::DOT, WaveEngine::FILL), rgb)
     end
-    if @mode == :wallpaper
-      Platform.update_layered(@hwnd, @buffer.dc, @width, @height)
-    else
-      invalidate(RenderMath.union_rect(changes, WaveEngine::DOT))
-      Platform.UpdateWindow(@hwnd) if Platform::API_READY
-    end
+    invalidate(RenderMath.union_rect(changes, WaveEngine::DOT))
+    Platform.UpdateWindow(@hwnd) if Platform::API_READY
   end
 
   #次のタイマーの間隔を決める（切り替え中は16ミリ秒、表示中は間引く）

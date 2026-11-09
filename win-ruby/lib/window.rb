@@ -36,7 +36,6 @@ class NativeWindow
     @@pending = nil
     raise 'ウィンドウを作れませんでした' if @hwnd.nil? || @hwnd.null?
     @@handlers[@hwnd.to_i] = self
-    Platform.UpdateWindow(@hwnd)
   end
 
   #メッセージループを回す（ウィンドウが閉じるまで戻らない）
