@@ -30,6 +30,8 @@ class SettingsWindow < NativeWindow
   ACCENT_HOVER = [16, 108, 199].freeze
   CHECK = [120, 190, 255].freeze
   PREVIEW_BG = [20, 20, 24].freeze
+  PREVIEW_DOT = 8
+  PREVIEW_FILL = 7
 
   #初期化（引数data_dirはデータフォルダ、引数paintings_dirは素材のフォルダ、引数widthとheightはウィンドウの大きさ）
   def initialize(data_dir:, paintings_dir:, width:, height:)
@@ -123,12 +125,12 @@ class SettingsWindow < NativeWindow
       content_w = pw
       content_h = (pw / target_aspect).round
     end
-    cols = [(content_w / WaveEngine::DOT.to_f).ceil, 1].max
-    rows = [(content_h / WaveEngine::DOT.to_f).ceil, 1].max
-    @preview_offset_x = px + (pw - cols * WaveEngine::DOT) / 2
-    @preview_offset_y = py + (ph - rows * WaveEngine::DOT) / 2
+    cols = [(content_w / PREVIEW_DOT.to_f).ceil, 1].max
+    rows = [(content_h / PREVIEW_DOT.to_f).ceil, 1].max
+    @preview_offset_x = px + (pw - cols * PREVIEW_DOT) / 2
+    @preview_offset_y = py + (ph - rows * PREVIEW_DOT) / 2
     grids = Loader.grids(list, cols, rows, Platform.cache_dir, Wic.method(:decode))
-    @engine = WaveEngine.new(grids, cols, rows)
+    @engine = WaveEngine.new(grids, cols, rows, dot: PREVIEW_DOT, fill: PREVIEW_FILL)
     @preview_cols = cols
     @preview_rows = rows
     @dot_colors = {}
@@ -155,10 +157,10 @@ class SettingsWindow < NativeWindow
     py = @preview_offset_y || rects[:preview][1]
     changes.each do |col, row, rgb|
       @dot_colors[row * @preview_cols + col] = rgb
-      x, y, w, h = RenderMath.dot_rect(col, row, WaveEngine::DOT, WaveEngine::FILL)
+      x, y, w, h = RenderMath.dot_rect(col, row, PREVIEW_DOT, PREVIEW_FILL)
       @buffer.fill([px + x, py + y, w, h], rgb)
     end
-    union = RenderMath.union_rect(changes, WaveEngine::DOT)
+    union = RenderMath.union_rect(changes, PREVIEW_DOT)
     invalidate([px + union[0], py + union[1], union[2], union[3]]) if union
   end
 
@@ -186,16 +188,16 @@ class SettingsWindow < NativeWindow
   #プレビューを描く（引数rectsは配置）
   def draw_preview(rects)
     x, y, w, h = rects[:preview]
-    @buffer.fill([x, y, w, h], BG)
+    @buffer.fill([x, y, w, h], PREVIEW_BG)
     ox = @preview_offset_x || x
     oy = @preview_offset_y || y
-    pw = (@preview_cols || 1) * WaveEngine::DOT
-    ph = (@preview_rows || 1) * WaveEngine::DOT
+    pw = (@preview_cols || 1) * PREVIEW_DOT
+    ph = (@preview_rows || 1) * PREVIEW_DOT
     @buffer.fill([ox, oy, pw, ph], PREVIEW_BG)
     @dot_colors.each do |i, rgb|
       col = i % @preview_cols
       row = i / @preview_cols
-      dx, dy, dw, dh = RenderMath.dot_rect(col, row, WaveEngine::DOT, WaveEngine::FILL)
+      dx, dy, dw, dh = RenderMath.dot_rect(col, row, PREVIEW_DOT, PREVIEW_FILL)
       @buffer.fill([ox + dx, oy + dy, dw, dh], rgb)
     end
   end

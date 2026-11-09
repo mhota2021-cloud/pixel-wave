@@ -1,4 +1,4 @@
-#アニメーションの状態機械（描画から切り離した純粋な部分。値はTypeScript版のエンジンに合わせる）
+﻿#アニメーションの状態機械（描画から切り離した純粋な部分。値はTypeScript版のエンジンに合わせる）
 require_relative 'dotart'
 
 class WaveEngine
@@ -10,11 +10,15 @@ class WaveEngine
   GLOW_RATIO = 0.6
   BACKGROUND = [20, 20, 24].freeze
 
-  #初期化（引数gridsはパレットと番号の組の配列、引数colsとrowsはドットの数、引数rngは乱数）
-  def initialize(grids, cols, rows, rng: Random.new)
+  attr_reader :dot, :fill
+
+  #初期化（引数gridsはパレットと番号の組の配列、引数colsとrowsはドットの数、引数rngは乱数、引数dotとfillはドットの大きさと塗りつぶし幅）
+  def initialize(grids, cols, rows, rng: Random.new, dot: DOT, fill: FILL)
     @grids = grids
     @cols = cols
     @rows = rows
+    @dot = dot
+    @fill = fill
     @rng = rng
     @order = DotArt.shuffled_order(grids.length, rng)
     @pos = 0
@@ -95,13 +99,13 @@ class WaveEngine
     @pos = (@pos + 1) % @order.length
     @order = DotArt.shuffled_order(@grids.length, @rng, @from) if @pos == 0
     @target = @order[@pos]
-    w = @cols * DOT
-    h = @rows * DOT
+    w = @cols * @dot
+    h = @rows * @dot
     @center = DotArt.pick_perimeter_point(w, h, @rng)
     @max_dist = DotArt.farthest_corner_distance(@center[0], @center[1], w, h)
     @distances = Array.new(dot_count) do |i|
-      cx = (i % @cols) * DOT + DOT / 2.0
-      cy = (i / @cols) * DOT + DOT / 2.0
+      cx = (i % @cols) * @dot + @dot / 2.0
+      cy = (i / @cols) * @dot + @dot / 2.0
       DotArt.distance(cx, cy, @center[0], @center[1])
     end
   end
@@ -119,7 +123,7 @@ class WaveEngine
       return changes
     end
     radius = DotArt.ease_in_out(t) * @max_dist
-    band = BAND_DOTS * DOT
+    band = BAND_DOTS * @dot
     dot_count.times do |i|
       d = @distances[i]
       painting = d <= radius ? @target : @from

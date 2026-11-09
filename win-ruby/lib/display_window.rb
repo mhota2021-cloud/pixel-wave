@@ -85,7 +85,7 @@ class DisplayWindow < NativeWindow
   #壁紙として貼り付ける（失敗しても表示は続ける）
   def attach_wallpaper
     log_path = File.join(Platform.data_dir, 'wallpaper.log')
-    Platform.attach_24h2(@hwnd, 0, 0, @width, @height, log_path)
+    Platform.attach_wallpaper(@hwnd, 0, 0, @width, @height, log_path)
   rescue StandardError => e
     File.open(log_path, 'a') { |f| f.puts "#{Time.now}: 貼り付け失敗（#{e.message}）" } rescue nil
   end

@@ -39,7 +39,7 @@ jobs:
         if: matrix.os == 'macos-latest'
         run: |
           cd engine && npm run build
-          cd ../app/saver && ./build.sh
+          cd ../app/saver && bash ./build.sh
 
       - name: アプリの画面の型チェック
         working-directory: app
