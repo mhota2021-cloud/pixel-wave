@@ -84,6 +84,7 @@ class DisplayWindow < NativeWindow
 
   #壁紙として貼り付ける（失敗しても表示は続ける）
   def attach_wallpaper
+    Platform.ensure_wallpaper_prerequisites
     log_path = File.join(Platform.data_dir, 'wallpaper.log')
     Platform.attach_wallpaper(@hwnd, 0, 0, @width, @height, log_path)
   rescue StandardError => e

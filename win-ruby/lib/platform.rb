@@ -326,4 +326,51 @@ module Platform
   rescue StandardError
     nil
   end
+
+  SPI_GETCLIENTAREAANIMATION = 0x1042
+  SPI_SETCLIENTAREAANIMATION = 0x1043
+  SPI_SETDESKWALLPAPER = 0x0014
+  SPIF_UPDATEINIFILE = 0x01
+  SPIF_SENDCHANGE = 0x02
+
+  #動的壁紙に必要なWindows環境（アニメーションと壁紙画像）を整える
+  def ensure_wallpaper_prerequisites
+    return unless API_READY
+
+    #1. ウィンドウアニメーションの有効化
+    buffer = Fiddle::Pointer.malloc(4)
+    if SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, buffer, 0) != 0
+      anim = buffer[0, 4].unpack1('L<')
+      if anim == 0
+        SystemParametersInfoW(SPI_SETCLIENTAREAANIMATION, 0, Fiddle::Pointer.new(1), SPIF_UPDATEINIFILE | SPIF_SENDCHANGE)
+      end
+    end
+
+    #2. 壁紙が単色（空文字）の場合、Windows標準の壁紙画像を設定してWorkerWの生成を促す
+    require 'win32/registry' rescue nil
+    wallpaper_path = ''
+    begin
+      Win32::Registry::HKEY_CURRENT_USER.open('Control Panel\Desktop') do |reg|
+        wallpaper_path = reg['Wallpaper'] rescue ''
+      end
+    rescue StandardError
+      wallpaper_path = ''
+    end
+
+    if wallpaper_path.nil? || wallpaper_path.strip.empty?
+      default_candidates = [
+        'C:\Windows\Web\Wallpaper\Windows\img0.jpg',
+        File.expand_path('../../assets/paintings/hokusai_great_wave.jpg', __dir__)
+      ]
+      img = default_candidates.find { |p| File.exist?(p) }
+      if img
+        path_w = wide(img)
+        ptr = Fiddle::Pointer.malloc(path_w.bytesize)
+        ptr[0, path_w.bytesize] = path_w
+        SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, ptr, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE)
+      end
+    end
+  rescue StandardError => e
+    warn "Windows環境の自動調整に失敗しました：#{e.message}"
+  end
 end

@@ -432,6 +432,7 @@ class SettingsWindow < NativeWindow
 
   #壁紙のプロセスを起動する
   def start_wallpaper
+    Platform.ensure_wallpaper_prerequisites
     command = self_command(['--wallpaper'])
     err_log = File.join(@data_dir, 'wallpaper_error.log')
     pid = spawn(*command, [:out, :err] => [err_log, 'a'])
