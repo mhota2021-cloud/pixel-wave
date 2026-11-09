@@ -152,12 +152,8 @@ module Platform
     ''
   end
 
-#壁紙として貼り付ける（引数hwndは自ウィンドウ、引数xとyは置く場所、引数wとhは大きさ、引数log_pathは記録の場所）
-  #Windows 11 24H2の階層構造に対応：
-  #1. 競合する壁紙描画WorkerWを非表示にする
-  #2. ProgmanにWS_CLIPCHILDRENを付与して子ウィンドウ領域を保護する
-  #3. レイヤードを排した通常のGDI可視子ウィンドウとしてProgmanの子にし、defview直後に配置する
-  def attach_wallpaper(hwnd, x, y, w, h, log_path)
+#壁紙用の受け皿ウィンドウ（WorkerW）を探す（Lively Wallpaperの手法）
+  def find_workerw(log_path = nil)
     progman = FindWindowW(wide('Progman'), nil)
     raise 'Progmanが見つかりません' if progman.nil? || progman.null?
 
@@ -165,33 +161,51 @@ module Platform
     SendMessageTimeoutW(progman, 0x052C, 0xD, 0, 0, 1000, result)
     SendMessageTimeoutW(progman, 0x052C, 0xD, 1, 0, 1000, result)
 
-    defview = FindWindowExW(progman, nil, wide('SHELLDLL_DefView'), nil)
-    raise 'SHELLDLL_DefViewが見つかりません' if defview.nil? || defview.null?
-
-    #1. WorkerWが表示されていることを保証する
+    #方法1: Windows 11 24H2（Progmanの直接の子にWorkerWがいる構成）
     workerw = FindWindowExW(progman, nil, wide('WorkerW'), nil)
+    return workerw if workerw && !workerw.null?
 
+    #方法2: Windows 10 / 11（SHELLDLL_DefViewを持つトップレベルウィンドウの次の兄弟WorkerW）
+    target_workerw = nil
+    callback = Fiddle::Closure::BlockCaller.new(Fiddle::TYPE_INT, [Fiddle::TYPE_VOIDP, Fiddle::TYPE_INTPTR_T]) do |top_hwnd, _lparam|
+      defview = FindWindowExW(top_hwnd, nil, wide('SHELLDLL_DefView'), nil)
+      if defview && !defview.null?
+        target_workerw = FindWindowExW(nil, top_hwnd, wide('WorkerW'), nil)
+        0
+      else
+        1
+      end
+    end
+    EnumWindows(callback, 0)
+    return target_workerw if target_workerw && !target_workerw.null?
 
-    ShowWindow(workerw, 5) if workerw && !workerw.null?
+    progman
+  end
 
-    #2. ProgmanにWS_CLIPCHILDRENを付与
-    progman_style = GetWindowLongPtrW(progman, GWL_STYLE)
-    SetWindowLongPtrW(progman, GWL_STYLE, progman_style | 0x02000000)
+  #壁紙として貼り付ける（引数hwndは自ウィンドウ、引数xとyは置く場所、引数wとhは大きさ、引数log_pathは記録の場所）
+  def attach_wallpaper(hwnd, x, y, w, h, log_path)
+    host = find_workerw(log_path)
+    raise '壁紙の配置先ウィンドウが見つかりません' if host.nil? || host.null?
 
-    #3. レイヤード不透明ウィンドウとしてProgmanの子にする
+    #WorkerWが表示状態であることを保証する
+    ShowWindow(host, 5)
+
+    #レイヤード不透明属性を設定し、DWM合成サーフェスを確保
     ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
     SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED)
     SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA)
+
+    #子ウィンドウとしてhostの子にする
     style = GetWindowLongPtrW(hwnd, GWL_STYLE)
     SetWindowLongPtrW(hwnd, GWL_STYLE, (style & ~WS_POPUP & ~0x00C00000 & ~0x00040000) | WS_CHILD | WS_VISIBLE | 0x04000000)
-    SetParent(hwnd, progman)
+    SetParent(hwnd, host)
 
-    #4. アイコン層（defview）の直後に配置
-    SetWindowPos(hwnd, defview, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED)
+    #hostのクライアント領域全体に配置
+    SetWindowPos(hwnd, nil, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED)
     InvalidateRect(hwnd, nil, 1)
     UpdateWindow(hwnd)
 
-    File.open(log_path, 'a') { |f| f.puts "#{Time.now}: Progmanの子にし、defview直後へ配置（レイヤード不透明、WorkerW表示）" } rescue nil
+    File.open(log_path, 'a') { |f| f.puts "#{Time.now}: ホスト(0x#{host.to_i.to_s(16)}, クラス=#{class_name(host)})の子として配置完了" } rescue nil
     true
   end
   alias attach_24h2 attach_wallpaper
