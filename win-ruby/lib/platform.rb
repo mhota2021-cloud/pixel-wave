@@ -22,6 +22,7 @@ module Platform
     extern 'int SetForegroundWindow(void*)'
     extern 'int ShowWindow(void*, int)'
     extern 'int SystemParametersInfoW(unsigned int, unsigned int, void*, unsigned int)'
+    extern 'int SetSysColors(int, void*, void*)'
     extern 'intptr_t GetWindowLongPtrW(void*, int)'
     extern 'intptr_t SetWindowLongPtrW(void*, int, intptr_t)'
     extern 'int SetLayeredWindowAttributes(void*, unsigned int, unsigned char, unsigned int)'
@@ -323,41 +324,159 @@ module Platform
   SPIF_UPDATEINIFILE = 0x01
   SPIF_SENDCHANGE = 0x02
 
-  #動的壁紙に必要なWindows環境（アニメーションと壁紙画像）を整える
+  #元の壁紙の保存ファイル
+  def backup_wallpaper_path
+    File.join(data_dir, 'original_wallpaper.json')
+  end
+
+  #現在の壁紙設定を退避して覚える（既に退避済みなら上書きしない）
+  def backup_wallpaper
+    return unless API_READY
+    path = backup_wallpaper_path
+    if File.exist?(path)
+      begin
+        return JSON.parse(File.read(path, encoding: 'UTF-8'))
+      rescue StandardError
+        #破損時は再作成へ進む
+      end
+    end
+
+    require 'win32/registry'
+    require 'json'
+    info = {
+      'wallpaper' => '',
+      'wallpaper_style' => '10',
+      'tile_wallpaper' => '0',
+      'background' => '0 0 0'
+    }
+
+    begin
+      Win32::Registry::HKEY_CURRENT_USER.open('Control Panel\Desktop') do |reg|
+        info['wallpaper'] = (reg['Wallpaper'] rescue '') || ''
+        info['wallpaper_style'] = (reg['WallpaperStyle'] rescue '10') || '10'
+        info['tile_wallpaper'] = (reg['TileWallpaper'] rescue '0') || '0'
+      end
+    rescue StandardError => e
+      warn "Control Panel\\Desktopの読み取りに失敗: #{e.message}"
+    end
+
+    begin
+      Win32::Registry::HKEY_CURRENT_USER.open('Control Panel\Colors') do |reg|
+        info['background'] = (reg['Background'] rescue '0 0 0') || '0 0 0'
+      end
+    rescue StandardError => e
+      warn "Control Panel\\Colorsの読み取りに失敗: #{e.message}"
+    end
+
+    File.write(path, JSON.pretty_generate(info), encoding: 'UTF-8')
+    info
+  rescue StandardError => e
+    warn "壁紙設定のバックアップに失敗: #{e.message}"
+    nil
+  end
+
+  #デスクトップの壁紙画像を設定する
+  def set_desktop_wallpaper(image_path, style = '10')
+    return false unless API_READY
+    return false unless File.exist?(image_path)
+
+    require 'win32/registry'
+    begin
+      Win32::Registry::HKEY_CURRENT_USER.open('Control Panel\Desktop', Win32::Registry::KEY_WRITE) do |reg|
+        reg['WallpaperStyle'] = style.to_s
+        reg['TileWallpaper'] = '0'
+      end
+    rescue StandardError => e
+      warn "レジストリ書き込み失敗: #{e.message}"
+    end
+
+    path_w = wide(image_path)
+    ptr = Fiddle::Pointer.malloc(path_w.bytesize)
+    ptr[0, path_w.bytesize] = path_w
+    res = SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, ptr, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE)
+    res != 0
+  rescue StandardError => e
+    warn "壁紙画像の設定に失敗: #{e.message}"
+    false
+  end
+
+  #元の壁紙設定に復元する
+  def restore_wallpaper
+    return false unless API_READY
+    path = backup_wallpaper_path
+    return false unless File.exist?(path)
+
+    require 'win32/registry'
+    require 'json'
+    info = begin
+      JSON.parse(File.read(path, encoding: 'UTF-8'))
+    rescue StandardError => e
+      warn "バックアップファイルの読み取りに失敗: #{e.message}"
+      return false
+    end
+
+    wallpaper = info['wallpaper'] || ''
+    style = info['wallpaper_style'] || '10'
+    tile = info['tile_wallpaper'] || '0'
+    bg = info['background'] || '0 0 0'
+
+    if wallpaper.strip.empty?
+      begin
+        Win32::Registry::HKEY_CURRENT_USER.open('Control Panel\Desktop', Win32::Registry::KEY_WRITE) do |reg|
+          reg['Wallpaper'] = ''
+        end
+        Win32::Registry::HKEY_CURRENT_USER.open('Control Panel\Colors', Win32::Registry::KEY_WRITE) do |reg|
+          reg['Background'] = bg
+        end
+      rescue StandardError => e
+        warn "単色レジストリ復元失敗: #{e.message}"
+      end
+
+      rgb_parts = bg.split.map(&:to_i)
+      r = rgb_parts[0] || 0
+      g = rgb_parts[1] || 0
+      b = rgb_parts[2] || 0
+      color_val = r | (g << 8) | (b << 16)
+      elements = [1].pack('l')
+      colors = [color_val].pack('l')
+      SetSysColors(1, elements, colors)
+
+      empty_w = wide('')
+      ptr = Fiddle::Pointer.malloc(empty_w.bytesize)
+      ptr[0, empty_w.bytesize] = empty_w
+      SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, ptr, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE)
+    else
+      begin
+        Win32::Registry::HKEY_CURRENT_USER.open('Control Panel\Desktop', Win32::Registry::KEY_WRITE) do |reg|
+          reg['WallpaperStyle'] = style
+          reg['TileWallpaper'] = tile
+        end
+      rescue StandardError => e
+        warn "画像壁紙レジストリ復元失敗: #{e.message}"
+      end
+
+      path_w = wide(wallpaper)
+      ptr = Fiddle::Pointer.malloc(path_w.bytesize)
+      ptr[0, path_w.bytesize] = path_w
+      SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, ptr, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE)
+    end
+
+    File.delete(path) rescue nil
+    true
+  rescue StandardError => e
+    warn "壁紙の復元に失敗: #{e.message}"
+    false
+  end
+
+  #動的壁紙に必要なWindows環境（アニメーション）を整える
   def ensure_wallpaper_prerequisites
     return unless API_READY
 
-    #1. ウィンドウアニメーションの有効化
     buffer = Fiddle::Pointer.malloc(4)
     if SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, buffer, 0) != 0
       anim = buffer[0, 4].unpack1('L<')
       if anim == 0
         SystemParametersInfoW(SPI_SETCLIENTAREAANIMATION, 0, Fiddle::Pointer.new(1), SPIF_UPDATEINIFILE | SPIF_SENDCHANGE)
-      end
-    end
-
-    #2. 壁紙が単色（空文字）の場合、Windows標準の壁紙画像を設定してWorkerWの生成を促す
-    require 'win32/registry' rescue nil
-    wallpaper_path = ''
-    begin
-      Win32::Registry::HKEY_CURRENT_USER.open('Control Panel\Desktop') do |reg|
-        wallpaper_path = reg['Wallpaper'] rescue ''
-      end
-    rescue StandardError
-      wallpaper_path = ''
-    end
-
-    if wallpaper_path.nil? || wallpaper_path.strip.empty?
-      default_candidates = [
-        'C:\Windows\Web\Wallpaper\Windows\img0.jpg',
-        File.expand_path('../../assets/paintings/hokusai_great_wave.jpg', __dir__)
-      ]
-      img = default_candidates.find { |p| File.exist?(p) }
-      if img
-        path_w = wide(img)
-        ptr = Fiddle::Pointer.malloc(path_w.bytesize)
-        ptr[0, path_w.bytesize] = path_w
-        SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, ptr, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE)
       end
     end
   rescue StandardError => e
