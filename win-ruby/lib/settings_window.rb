@@ -433,7 +433,8 @@ class SettingsWindow < NativeWindow
   #壁紙のプロセスを起動する
   def start_wallpaper
     command = self_command(['--wallpaper'])
-    pid = spawn(*command)
+    err_log = File.join(@data_dir, 'wallpaper_error.log')
+    pid = spawn(*command, [:out, :err] => [err_log, 'a'])
     Process.detach(pid)
     File.write(File.join(@data_dir, 'wallpaper.pid'), pid.to_s)
     Platform.set_run_entry('PixelWave', command.map { |c| "\"#{c}\"" }.join(' '))

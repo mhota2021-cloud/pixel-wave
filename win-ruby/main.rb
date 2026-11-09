@@ -1,4 +1,4 @@
-#Pixel Wave（Windows版、Ruby）の入口。引数で動きを変える
+﻿#Pixel Wave（Windows版、Ruby）の入口。引数で動きを変える
 require_relative 'lib/args'
 require_relative 'lib/settings'
 require_relative 'lib/loader'
@@ -13,10 +13,11 @@ def paintings_dir(app_root)
   candidates.find { |c| File.exist?(File.join(c, 'credits.json')) } || candidates.first
 end
 
-mode = Args.parse_mode(ARGV)
-app_root = __dir__
+begin
+  mode = Args.parse_mode(ARGV)
+  app_root = __dir__
 
-case mode
+  case mode
 when :preview
   #プレビューは作らず、すぐ終了する
   exit(0)
@@ -54,4 +55,12 @@ else
     width: width,
     height: height
   ).start
+end
+rescue => e
+  log_path = File.join(Platform.data_dir, 'crash.log')
+  File.open(log_path, 'a') do |f|
+    f.puts "#{Time.now}: #{e.class} - #{e.message}"
+    f.puts e.backtrace
+  end
+  raise
 end
