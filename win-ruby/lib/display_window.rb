@@ -45,6 +45,7 @@ class DisplayWindow < NativeWindow
   def start
     attach_wallpaper if @mode == :wallpaper
     advance_frame
+    Platform.update_layered(@hwnd, @buffer.dc, @width, @height) if @mode == :wallpaper
     Platform.UpdateWindow(@hwnd) if Platform::API_READY
     set_timer(TIMER_CHECK, 2000)
     schedule_tick
@@ -53,6 +54,7 @@ class DisplayWindow < NativeWindow
 
   #メッセージの処理
   def handle_message(hwnd, msg, wparam, lparam)
+    File.open(File.join(Platform.data_dir, 'wallpaper_debug.log'), 'a') { |f| f.puts "msg=0x#{msg.to_s(16)}" } rescue nil if msg != 0x0113 && msg != 0x0200
     case msg
     when WM_PAINT
       paint_struct = Fiddle::Pointer.malloc(128)
@@ -95,8 +97,12 @@ class DisplayWindow < NativeWindow
     changes.each do |col, row, rgb|
       @buffer.fill(RenderMath.dot_rect(col, row, WaveEngine::DOT, WaveEngine::FILL), rgb)
     end
-    invalidate(RenderMath.union_rect(changes, WaveEngine::DOT))
-    Platform.UpdateWindow(@hwnd) if Platform::API_READY
+    if @mode == :wallpaper
+      Platform.update_layered(@hwnd, @buffer.dc, @width, @height)
+    else
+      invalidate(RenderMath.union_rect(changes, WaveEngine::DOT))
+      Platform.UpdateWindow(@hwnd) if Platform::API_READY
+    end
   end
 
   #次のタイマーの間隔を決める（切り替え中は16ミリ秒、表示中は間引く）

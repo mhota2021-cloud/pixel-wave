@@ -24,6 +24,7 @@ module Platform
     extern 'int SystemParametersInfoW(unsigned int, unsigned int, void*, unsigned int)'
     extern 'intptr_t GetWindowLongPtrW(void*, int)'
     extern 'intptr_t SetWindowLongPtrW(void*, int, intptr_t)'
+    extern 'int UpdateLayeredWindow(void*, void*, void*, void*, void*, void*, unsigned int, void*, unsigned int)'
     extern 'int SetLayeredWindowAttributes(void*, unsigned int, int, unsigned int)'
     extern 'int GetSystemPowerStatus(void*)'
     #ウィンドウの作成とメッセージ
@@ -154,6 +155,14 @@ module Platform
   #壁紙として貼り付ける（引数hwndは自ウィンドウ、引数xとyは置く場所、引数log_pathは記録の場所）
   #実機でアイコンの後ろに見えた方法：Progmanの直接の子にし、重なり順をSHELLDLL_DefViewのすぐ奥にし、レイヤードにする
   #呼び出しは、ウィンドウを作ったスレッドから行うこと
+  #レイヤードウィンドウの画面を更新する（引数hwndはウィンドウ、引数hdc_srcは裏画面DC、引数wとhは大きさ、引数xとyは位置）
+  def update_layered(hwnd, hdc_src, w, h, x = 0, y = 0)
+    pt_dst = [x, y].pack('l<2')
+    sz = [w, h].pack('l<2')
+    pt_src = [0, 0].pack('l<2')
+    blend = [0, 0, 255, 0].pack('CCCC')
+    UpdateLayeredWindow(hwnd, nil, pt_dst, sz, hdc_src, pt_src, 0, blend, 2)
+  end
   def attach_24h2(hwnd, x, y, w, h, log_path)
     progman = FindWindowW(wide('Progman'), nil)
     raise 'Progmanが見つかりません' if progman.nil? || progman.null?
@@ -166,7 +175,6 @@ module Platform
     SetWindowLongPtrW(hwnd, GWL_STYLE, (style & ~WS_POPUP) | WS_CHILD | WS_VISIBLE)
     exstyle = GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
     SetWindowLongPtrW(hwnd, GWL_EXSTYLE, exstyle | WS_EX_LAYERED)
-    SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA)
     SetParent(hwnd, progman)
     SetWindowPos(hwnd, defview, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED)
     File.open(log_path, 'a') { |f| f.puts "#{Time.now}: Progmanの子にし、SHELLDLL_DefViewのすぐ奥へ置いた" } rescue nil
