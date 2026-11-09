@@ -61,7 +61,13 @@ Museの報告は、そのまま信じない。これまでに次の食い違い�
 
 ## 分かったこと
 
-- **Windows 11 26H2のデスクトップ**：ProgmanがWS_EX_NOREDIRECTIONBITMAP（0x200000）を持ち、子にSHELLDLL_DefViewとWorkerWがある。WorkerWの子にしたウィンドウは見えない。Progmanの直接の子にし、SHELLDLL_DefViewのすぐ奥に置き、レイヤード（不透明度255）にすると見えた。レイヤードの設定は、ウィンドウを持つプロセスの中からしかできなかった（PowerShellから外部で行うと失敗した）。
+- **Windows 11 26H2のデスクトップ**：ProgmanがWS_EX_NOREDIRECTIONBITMAP（0x200000）を持ち、子にSHELLDLL_DefView（アイコン）とWorkerW（写真の壁紙）がある。動く手順は`Platform.attach_wallpaper`の順番どおりで、順番を変えると見えなくなる（2026-11-09にデスクトップを撮って確認）。
+  1. 自ウィンドウを`WS_CHILD`にして`SetParent(hwnd, progman)`。
+  2. 子になった**後で**`WS_EX_LAYERED`と`SetLayeredWindowAttributes(255)`を付ける。
+  3. `SetWindowPos(hwnd, defview, …)`でアイコンのすぐ奥に置く。
+  4. `SetWindowPos(workerw, hwnd, …, SWP_NOMOVE|SWP_NOSIZE)`でWorkerWを自ウィンドウの奥へ移す。これが無いと写真が手前に来てドット絵が隠れる。
+- うまくいかなかった構成：WorkerWの子にする（写真しか出ない）、WorkerWを`SW_HIDE`する（写真も消える）、レイヤードにしない（Progmanの下ではGDIの絵が届かない）。`ruby.exe`のマニフェストにWindows 8以降の互換宣言が無いのも疑ったが、宣言を足した写しと元の`ruby.exe`の両方で同じように映ったので関係ない。
+- レイヤードの設定は、ウィンドウを持つプロセスの中からしかできなかった（PowerShellから外部で行うと失敗した）。
 - **Tauri版の壁紙が応答なしになる件**：Windowsで同期のコマンドの中からウィンドウを作るとデッドロックするので`async`にしたが、それでも応答なしになった。原因は未解決（上の24H2の構造を見つけられていない可能性が高い）。Windows版はRubyに替えたので、追わずに置いている。
 - **Gosuの日本語**：フォントは名前ではなくファイルの場所（`C:/Windows/Fonts/YuGothM.ttc`）で指定しないと、日本語の無いArialになる。
 - **Ruby版の準備**：RubyInstallerに付いているMSYS2の鍵が無効だった。`C:\Ruby34-x64\msys64\usr\bin\bash.exe -lc "pacman-key --init && pacman-key --populate msys2"`で直し、`pacman -S mingw-w64-ucrt-x86_64-libffi mingw-w64-ucrt-x86_64-SDL2`を入れた。gemは`win-ruby\vendor\bundle`にある（`bundle install`済み）。
@@ -104,7 +110,9 @@ Museの報告は、そのまま信じない。これまでに次の食い違い�
   1. `WorkerW` はWindows Explorerが壁紙写真を描画しているレイヤーそのものだったため、`ShowWindow(workerw, 0)` で非表示にするとOS側の写真描画が消えた。
   2. Windows 11 24H2の `Progman` はトップレベルで `WS_EX_NOREDIRECTIONBITMAP` を持っている。この属性を持つウィンドウ配下の通常GDI子ウィンドウ（非レイヤード）には、DWMが描画リダイレクションバッファを割り当てない。そのため、GDI（`BitBlt`）で描画してもDWMの画面合成パイプラインに届かず、完全に透明（画面に一切現れない状態）になった。
 
-#### 最新状態（コミットa556f16）
-- **構成**: 自ウィンドウの親ウィンドウを、写真を描画している `WorkerW` 自身に設定（`SetParent(hwnd, workerw)`）。レイヤード不透明属性（`WS_EX_LAYERED`、不透明度255）を付与。
-- **狙い**: Lively Wallpaperの標準手法に倣い、`WorkerW` の子ウィンドウにすることで、親（`WorkerW`）の写真描画サーフェスの手前（表面）に自ウィンドウを描画させ、写真に覆い隠される問題を解消する。
-- **現在の課題**: この最新構成でアニメーションが実際にデスクトップ画面に反映されるか、あるいはWindows 11 24H2特有の別の制約（DWMのコンポジションモード等）がないかの最終検証。
+#### 失敗3: WorkerWの子にする（コミットa556f16）
+- 写真しか出なかった（Claude Codeで撮って確認）。
+
+#### 解決（Claude Code、2026-11-09）
+- 「分かったこと」の26H2の手順に直し、アイコンの後ろでドット絵が動き、次の絵へ波で切り替わることを撮って確かめた。失敗1との差は、レイヤードを付ける順番と、WorkerWを奥へ移す手順である。
+- `display_window.rb`の、全メッセージを`wallpaper_debug.log`に書く調査用の行を消した。

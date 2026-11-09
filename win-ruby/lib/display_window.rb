@@ -56,7 +56,6 @@ class DisplayWindow < NativeWindow
 
   #メッセージの処理
   def handle_message(hwnd, msg, wparam, lparam)
-    File.open(File.join(Platform.data_dir, 'wallpaper_debug.log'), 'a') { |f| f.puts "msg=0x#{msg.to_s(16)}" } rescue nil if msg != 0x0113 && msg != 0x0200
     case msg
     when WM_PAINT
       paint_struct = Fiddle::Pointer.malloc(128)

@@ -186,26 +186,28 @@ module Platform
   def attach_wallpaper(hwnd, x, y, w, h, log_path)
     host = find_workerw(log_path)
     raise '壁紙の配置先ウィンドウが見つかりません' if host.nil? || host.null?
+    progman = FindWindowW(wide('Progman'), nil)
+    defview = FindWindowExW(progman, nil, wide('SHELLDLL_DefView'), nil)
+    raised = defview && !defview.null?
 
-    #WorkerWが表示状態であることを保証する
-    ShowWindow(host, 5)
-
-    #レイヤード不透明属性を設定し、DWM合成サーフェスを確保
-    ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
-    SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED)
-    SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA)
-
-    #子ウィンドウとしてhostの子にする
     style = GetWindowLongPtrW(hwnd, GWL_STYLE)
     SetWindowLongPtrW(hwnd, GWL_STYLE, (style & ~WS_POPUP & ~0x00C00000 & ~0x00040000) | WS_CHILD | WS_VISIBLE | 0x04000000)
-    SetParent(hwnd, host)
-
-    #hostのクライアント領域全体に配置
-    SetWindowPos(hwnd, nil, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED)
+    if raised
+      SetParent(hwnd, progman)
+      ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
+      SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED)
+      SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA)
+      SetWindowPos(hwnd, defview, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED)
+      SetWindowPos(host, hwnd, 0, 0, 0, 0, SWP_NOACTIVATE | 0x0001 | 0x0002) if host.to_i != progman.to_i
+    else
+      SetParent(hwnd, host)
+      SetWindowPos(hwnd, nil, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED)
+    end
     InvalidateRect(hwnd, nil, 1)
     UpdateWindow(hwnd)
 
-    File.open(log_path, 'a') { |f| f.puts "#{Time.now}: ホスト(0x#{host.to_i.to_s(16)}, クラス=#{class_name(host)})の子として配置完了" } rescue nil
+    ex_now = GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
+    File.open(log_path, 'a') { |f| f.puts "#{Time.now}: 配置完了（24H2構成=#{raised}、ex=0x#{ex_now.to_s(16)}）" } rescue nil
     true
   end
   alias attach_24h2 attach_wallpaper
