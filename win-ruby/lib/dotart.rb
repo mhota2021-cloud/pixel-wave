@@ -187,10 +187,6 @@ module DotArt
     Math.sqrt(dx * dx + dy * dy)
   end
 
-  #点が円の内側か返す（引数cxとcyはドットの中心、引数pxとpyは円の中心、引数rは半径）
-  def inside_circle?(cx, cy, px, py, r)
-    distance(cx, cy, px, py) <= r
-  end
 
   #距離が波の先頭の帯の中か返す（引数distは中心からの距離、引数radiusは今の半径、引数bandは帯の幅）
   def in_wave_front?(dist, radius, band)

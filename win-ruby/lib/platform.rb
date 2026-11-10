@@ -15,18 +15,13 @@ module Platform
     extern 'intptr_t SendMessageTimeoutW(void*, unsigned int, uintptr_t, intptr_t, unsigned int, unsigned int, void*)'
     extern 'void* SetParent(void*, void*)'
     extern 'int SetWindowPos(void*, void*, int, int, int, int, unsigned int)'
-    extern 'void* GetForegroundWindow()'
-    extern 'int GetWindowRect(void*, void*)'
-    extern 'int GetClassNameW(void*, void*, int)'
     extern 'int GetSystemMetrics(int)'
     extern 'int SetForegroundWindow(void*)'
     extern 'int ShowWindow(void*, int)'
     extern 'int SystemParametersInfoW(unsigned int, unsigned int, void*, unsigned int)'
-    extern 'int SetSysColors(int, void*, void*)'
     extern 'intptr_t GetWindowLongPtrW(void*, int)'
     extern 'intptr_t SetWindowLongPtrW(void*, int, intptr_t)'
     extern 'int SetLayeredWindowAttributes(void*, unsigned int, unsigned char, unsigned int)'
-    extern 'int GetSystemPowerStatus(void*)'
     #ウィンドウの作成とメッセージ
     extern 'unsigned short RegisterClassExW(void*)'
     extern 'void* CreateWindowExW(unsigned int, void*, void*, unsigned int, int, int, int, int, void*, void*, void*, void*)'
@@ -142,18 +137,9 @@ module Platform
     SetForegroundWindow(hwnd)
   end
 
-  #ウィンドウのクラス名を読む（引数hwndはウィンドウ）
-  def class_name(hwnd)
-    buffer = "\x00" * 512
-    len = GetClassNameW(hwnd, buffer, 256)
-    return '' if len <= 0
-    buffer[0, len * 2].force_encoding('UTF-16LE').encode('UTF-8')
-  rescue StandardError
-    ''
-  end
 
 #壁紙用の受け皿ウィンドウ（WorkerW）を探す（Lively Wallpaperの手法）
-  def find_workerw(log_path = nil)
+  def find_workerw
     progman = FindWindowW(wide('Progman'), nil)
     raise 'Progmanが見つかりません' if progman.nil? || progman.null?
 
@@ -184,59 +170,29 @@ module Platform
 
   #壁紙として貼り付ける（引数hwndは自ウィンドウ、引数xとyは置く場所、引数wとhは大きさ、引数log_pathは記録の場所）
   def attach_wallpaper(hwnd, x, y, w, h, log_path)
-    host = find_workerw(log_path)
+    host = find_workerw
     raise '壁紙の配置先ウィンドウが見つかりません' if host.nil? || host.null?
     progman = FindWindowW(wide('Progman'), nil)
     defview = FindWindowExW(progman, nil, wide('SHELLDLL_DefView'), nil)
-    raised = defview && !defview.null?
+    raise 'SHELLDLL_DefViewが見つかりません' if defview.nil? || defview.null?
 
     style = GetWindowLongPtrW(hwnd, GWL_STYLE)
     SetWindowLongPtrW(hwnd, GWL_STYLE, (style & ~WS_POPUP & ~0x00C00000 & ~0x00040000) | WS_CHILD | WS_VISIBLE | 0x04000000)
-    if raised
-      SetParent(hwnd, progman)
-      ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
-      SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED)
-      SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA)
-      SetWindowPos(hwnd, defview, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED)
-      SetWindowPos(host, hwnd, 0, 0, 0, 0, SWP_NOACTIVATE | 0x0001 | 0x0002) if host.to_i != progman.to_i
-    else
-      SetParent(hwnd, host)
-      SetWindowPos(hwnd, nil, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED)
-    end
+    SetParent(hwnd, progman)
+    ex_style = GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
+    SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED)
+    SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA)
+    SetWindowPos(hwnd, defview, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED)
+    SetWindowPos(host, hwnd, 0, 0, 0, 0, SWP_NOACTIVATE | 0x0001 | 0x0002) if host.to_i != progman.to_i
     InvalidateRect(hwnd, nil, 1)
     UpdateWindow(hwnd)
 
     ex_now = GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
-    File.open(log_path, 'a') { |f| f.puts "#{Time.now}: 配置完了（24H2構成=#{raised}、ex=0x#{ex_now.to_s(16)}）" } rescue nil
+    File.open(log_path, 'a') { |f| f.puts "#{Time.now}: 配置完了（ex=0x#{ex_now.to_s(16)}）" } rescue nil
     true
   end
-  alias attach_24h2 attach_wallpaper
 
-  #前面のアプリが全画面か調べる（引数own_hwndは自ウィンドウで、自分は除く）
-  def foreground_fullscreen?(own_hwnd)
-    fg = GetForegroundWindow()
-    return false if fg.nil? || fg.null?
-    return false if own_hwnd && fg.to_i == own_hwnd.to_i
-    name = class_name(fg)
-    return false if %w[Progman WorkerW Shell_TrayWnd Shell_SecondaryTrayWnd].include?(name)
-    buffer = "\x00" * 16
-    return false if GetWindowRect(fg, buffer) == 0
-    left, top, right, bottom = buffer.unpack('l<4')
-    sw = GetSystemMetrics(0)
-    sh = GetSystemMetrics(1)
-    left <= 0 && top <= 0 && right >= sw && bottom >= sh
-  rescue StandardError
-    false
-  end
 
-  #電池で動いているか調べる（交流電源につながっていないとき真）
-  def battery_powered?
-    buffer = "\x00" * 12
-    return false if GetSystemPowerStatus(buffer) == 0
-    buffer.getbyte(0) == 0
-  rescue StandardError
-    false
-  end
 
   #仮想画面の範囲を返す（戻り値はxとyと幅と高さ）
   def virtual_screen
@@ -340,16 +296,6 @@ module Platform
     nil
   end
 
-  #古い版が登録した自動起動（Runキー）を消す（引数nameは登録名）
-  def delete_run_entry(name)
-    require 'win32/registry'
-    Win32::Registry::HKEY_CURRENT_USER.open('Software\Microsoft\Windows\CurrentVersion\Run', Win32::Registry::KEY_WRITE) do |reg|
-      reg.delete_value(name)
-    end
-  rescue StandardError
-    nil
-  end
-
   #スクリーンセーバーとして登録する（引数pathは.scrの場所）
   def register_screensaver(path)
     require 'win32/registry'
@@ -359,104 +305,5 @@ module Platform
     end
   rescue StandardError
     nil
-  end
-
-  SPI_GETCLIENTAREAANIMATION = 0x1042
-  SPI_SETCLIENTAREAANIMATION = 0x1043
-  SPI_SETDESKWALLPAPER = 0x0014
-  SPIF_UPDATEINIFILE = 0x01
-  SPIF_SENDCHANGE = 0x02
-
-  #古い版（2026-11-10より前）が壁紙を書き換える前に退避したファイル
-  def backup_wallpaper_path
-    File.join(data_dir, 'original_wallpaper.json')
-  end
-
-  #古い版が退避した壁紙設定に戻す（ファイルが無ければ何もしない）
-  def restore_wallpaper
-    return false unless API_READY
-    path = backup_wallpaper_path
-    return false unless File.exist?(path)
-
-    require 'win32/registry'
-    require 'json'
-    info = begin
-      JSON.parse(File.read(path, encoding: 'UTF-8'))
-    rescue StandardError => e
-      warn "バックアップファイルの読み取りに失敗: #{e.message}"
-      return false
-    end
-
-    wallpaper = info['wallpaper'] || ''
-    style = info['wallpaper_style'] || '10'
-    tile = info['tile_wallpaper'] || '0'
-    bg = info['background'] || '0 0 0'
-
-    if wallpaper.strip.empty?
-      begin
-        Win32::Registry::HKEY_CURRENT_USER.open('Control Panel\Desktop', Win32::Registry::KEY_WRITE) do |reg|
-          reg['Wallpaper'] = ''
-        end
-        Win32::Registry::HKEY_CURRENT_USER.open('Control Panel\Colors', Win32::Registry::KEY_WRITE) do |reg|
-          reg['Background'] = bg
-        end
-      rescue StandardError => e
-        warn "単色レジストリ復元失敗: #{e.message}"
-      end
-
-      rgb_parts = bg.split.map(&:to_i)
-      r = rgb_parts[0] || 0
-      g = rgb_parts[1] || 0
-      b = rgb_parts[2] || 0
-      color_val = r | (g << 8) | (b << 16)
-      elements = [1].pack('l')
-      colors = [color_val].pack('l')
-      SetSysColors(1, elements, colors)
-
-      empty_w = wide('')
-      ptr = Fiddle::Pointer.malloc(empty_w.bytesize)
-      ptr[0, empty_w.bytesize] = empty_w
-      SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, ptr, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE)
-    else
-      begin
-        Win32::Registry::HKEY_CURRENT_USER.open('Control Panel\Desktop', Win32::Registry::KEY_WRITE) do |reg|
-          reg['WallpaperStyle'] = style
-          reg['TileWallpaper'] = tile
-        end
-      rescue StandardError => e
-        warn "画像壁紙レジストリ復元失敗: #{e.message}"
-      end
-
-      path_w = wide(wallpaper)
-      ptr = Fiddle::Pointer.malloc(path_w.bytesize)
-      ptr[0, path_w.bytesize] = path_w
-      SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, ptr, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE)
-    end
-
-    progman = FindWindowW(wide('Progman'), nil)
-    if progman && !progman.null?
-      workerw = FindWindowExW(progman, nil, wide('WorkerW'), nil)
-      ShowWindow(workerw, 5) if workerw && !workerw.null?
-    end
-    File.delete(path) rescue nil
-    true
-  rescue StandardError => e
-    warn "壁紙の復元に失敗: #{e.message}"
-    false
-  end
-
-  #動的壁紙に必要なWindows環境（アニメーション）を整える
-  def ensure_wallpaper_prerequisites
-    return unless API_READY
-
-    buffer = Fiddle::Pointer.malloc(4)
-    if SystemParametersInfoW(SPI_GETCLIENTAREAANIMATION, 0, buffer, 0) != 0
-      anim = buffer[0, 4].unpack1('L<')
-      if anim == 0
-        SystemParametersInfoW(SPI_SETCLIENTAREAANIMATION, 0, Fiddle::Pointer.new(1), SPIF_UPDATEINIFILE | SPIF_SENDCHANGE)
-      end
-    end
-  rescue StandardError => e
-    warn "Windows環境の自動調整に失敗しました：#{e.message}"
   end
 end

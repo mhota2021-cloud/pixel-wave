@@ -2,6 +2,8 @@
 
 source 'https://rubygems.org'
 
+gem 'win32ole'
+
 group :development do
   gem 'minitest'
   gem 'ocran', '~> 1.3'

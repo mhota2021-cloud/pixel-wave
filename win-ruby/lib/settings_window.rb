@@ -19,7 +19,6 @@ class SettingsWindow < NativeWindow
   DT_VCENTER = 0x0004
   DT_SINGLELINE = 0x0020
   DT_NOPREFIX = 0x0800
-  DT_END_ELLIPSIS = 0x8000
 
   BG = [24, 24, 28].freeze
   SURFACE = [40, 40, 47].freeze
@@ -181,8 +180,6 @@ class SettingsWindow < NativeWindow
     @buffer.fill_all(BG)
     draw_preview(rects)
     draw_grid(rects, cards)
-    battery_label = @settings['pauseOnBattery'] ? 'バッテリー時：一時停止' : 'バッテリー時：常に動かす'
-    draw_button(rects[:battery], battery_label, :normal, @hover == :battery)
     autostart_label = @settings['autostart'] ? 'ログイン時：壁紙を起動する' : 'ログイン時：起動しない'
     draw_button(rects[:autostart], autostart_label, :normal, @hover == :autostart)
     draw_button(rects[:add], '＋', :normal, @hover == :add)
@@ -341,9 +338,6 @@ class SettingsWindow < NativeWindow
     rects, cards = SettingsLayout.layout(@width, @height, list.length, @scroll)
     target = SettingsLayout.hit_test(rects, cards, mx, my)
     case target
-    when :battery
-      @settings['pauseOnBattery'] = !@settings['pauseOnBattery']
-      persist
     when :autostart
       @settings['autostart'] = !@settings['autostart']
       apply_autostart
@@ -449,18 +443,15 @@ class SettingsWindow < NativeWindow
   def toggle_wallpaper
     if @settings['wallpaper']
       stop_wallpaper
-      @settings['wallpaper'] = false
     else
       start_wallpaper
-      @settings['wallpaper'] = true
     end
-    AppSettings.save(@data_dir, @settings)
+    persist
   end
 
   #壁紙のプロセスを起動する
   #Windowsの壁紙は書き換えない（ドット絵のウィンドウが写真の手前を覆うため不要で、書き換えるとDefenderに怪しまれる）
   def start_wallpaper
-    Platform.ensure_wallpaper_prerequisites
     command = self_command(['--wallpaper'])
     err_log = File.join(@data_dir, 'wallpaper_error.log')
     pid = spawn(*command, [:out, :err] => [err_log, 'a'])
@@ -490,9 +481,6 @@ class SettingsWindow < NativeWindow
     end
     @settings['wallpaper'] = false
     apply_autostart
-    #古い版が残したRunの登録を消し、壁紙を書き換えていたときは退避したファイルから元に戻す
-    Platform.delete_run_entry('PixelWave')
-    Platform.restore_wallpaper
   end
   #スクリーンセーバーとして登録する
   def register_screensaver

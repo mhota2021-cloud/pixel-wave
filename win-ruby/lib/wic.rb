@@ -136,21 +136,6 @@ module Wic
     end
   end
 
-  #画像の大きさだけを返す（引数pathはファイルの場所。戻り値は幅と高さ）
-  def size(path)
-    fac = factory
-    frame = nil
-    begin
-      frame = first_frame(fac, path)
-      w_buf = Fiddle::Pointer.malloc(4)
-      h_buf = Fiddle::Pointer.malloc(4)
-      invoke(frame, 3, [Fiddle::Types::VOIDP, Fiddle::Types::VOIDP], Fiddle::Types::INT, w_buf, h_buf)
-      [w_buf[0, 4].unpack1('L<'), h_buf[0, 4].unpack1('L<')]
-    ensure
-      release(frame)
-      release(fac)
-    end
-  end
 
   #縮小画像をBGRAのバイト列で返す（引数pathはファイルの場所、引数max_wとmax_hは収める大きさで、縦横比は保つ。StretchDIBitsで描く用）
   def decode_thumb_bgra(path, max_w, max_h)

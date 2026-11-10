@@ -7,7 +7,7 @@ module AppSettings
 
   #初期設定を返す（引数builtin_idsは素材の絵のidの一覧）
   def defaults(builtin_ids)
-    { 'enabled' => builtin_ids.dup, 'userImages' => [], 'wallpaper' => false, 'pauseOnBattery' => true, 'autostart' => false }
+    { 'enabled' => builtin_ids.dup, 'userImages' => [], 'wallpaper' => false, 'autostart' => false }
   end
 
   #設定を読む（引数dirはデータフォルダ、引数builtin_idsは素材の絵のidの一覧。読めないときは初期設定で、壊れたファイルは退避する）
@@ -21,7 +21,6 @@ module AppSettings
         'enabled' => data['enabled'],
         'userImages' => data['userImages'],
         'wallpaper' => data['wallpaper'] ? true : false,
-        'pauseOnBattery' => data.key?('pauseOnBattery') ? (data['pauseOnBattery'] ? true : false) : true,
         'autostart' => data['autostart'] ? true : false,
       }
     rescue StandardError

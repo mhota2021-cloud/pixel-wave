@@ -47,13 +47,6 @@ class TestDotArt < Minitest::Test
     assert_equal 5000, a[1].length
   end
 
-  #円の内外の判定
-  def test_inside_circle
-    assert DotArt.inside_circle?(100, 100, 100, 100, 10)
-    assert DotArt.inside_circle?(105, 100, 100, 100, 10)
-    refute DotArt.inside_circle?(120, 100, 100, 100, 10)
-  end
-
   #波の先頭の帯の判定（半径ちょうどは含み、内側すぎると含まない）
   def test_wave_front
     assert DotArt.in_wave_front?(95, 100, 18)

@@ -16,8 +16,6 @@ class TestSettingsLayout < Minitest::Test
   #当たり判定（ボタンとカードと削除）
   def test_hit_test
     rects, cards = SettingsLayout.layout(880, 760, 8, 0)
-    bx, by, _bw, _bh = rects[:battery]
-    assert_equal :battery, SettingsLayout.hit_test(rects, cards, bx + 2, by + 2)
     sx, sy, sw, _sh = rects[:autostart]
     assert_equal :autostart, SettingsLayout.hit_test(rects, cards, sx + 2, sy + 2)
     assert sx + sw < rects[:add][0], '自動起動のボタンが＋と重ならないこと'

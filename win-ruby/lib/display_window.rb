@@ -9,10 +9,9 @@ require_relative 'render_math'
 
 class DisplayWindow < NativeWindow
   TIMER_TICK = 1
-  TIMER_CHECK = 2
 
   #初期化（引数modeはwallpaperかscreensaver、引数paintingsは使う絵の一覧、引数cache_dirはキャッシュのフォルダ）
-  def initialize(mode:, paintings:, cache_dir:, pause_on_battery: true)
+  def initialize(mode:, paintings:, cache_dir:)
     @mode = mode
     if mode == :wallpaper
       x, y, w, h = Platform::API_READY ? Platform.virtual_screen : [0, 0, 1280, 720]
@@ -37,9 +36,7 @@ class DisplayWindow < NativeWindow
     @buffer.fill_all(WaveEngine::BACKGROUND)
     @engine_time = 0.0
     @last_tick_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-    @paused = false
     @mouse_origin = nil
-    @pause_on_battery = pause_on_battery
   end
 
   #表示を始める（壁紙の貼り付けは、ウィンドウを作ったこのスレッドで行う）
@@ -53,7 +50,6 @@ class DisplayWindow < NativeWindow
     advance_frame
     invalidate(nil)
     Platform.UpdateWindow(@hwnd) if Platform::API_READY
-    set_timer(TIMER_CHECK, 2000)
     schedule_tick
     run
   end
@@ -70,7 +66,7 @@ class DisplayWindow < NativeWindow
     when WM_ERASEBKGND
       1
     when WM_TIMER
-      wparam.to_i == TIMER_CHECK ? on_check : on_tick
+      on_tick
       0
     when WM_DESTROY
       @buffer.dispose
@@ -89,7 +85,6 @@ class DisplayWindow < NativeWindow
 
   #壁紙として貼り付ける（失敗しても表示は続ける）
   def attach_wallpaper
-    Platform.ensure_wallpaper_prerequisites
     log_path = File.join(Platform.data_dir, 'wallpaper.log')
     Platform.attach_wallpaper(@hwnd, 0, 0, @width, @height, log_path)
   rescue StandardError => e
@@ -109,9 +104,7 @@ class DisplayWindow < NativeWindow
 
   #次のタイマーの間隔を決める（切り替え中は16ミリ秒、表示中は間引く）
   def schedule_tick
-    if @paused
-      kill_timer(TIMER_TICK)
-    elsif @engine.needs_redraw?(@engine_time)
+    if @engine.needs_redraw?(@engine_time)
       set_timer(TIMER_TICK, 16)
     else
       set_timer(TIMER_TICK, 250)
@@ -123,26 +116,11 @@ class DisplayWindow < NativeWindow
     now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     dt = now - @last_tick_at
     @last_tick_at = now
-    return if @paused
     @engine_time += dt
     advance_frame
     schedule_tick
   end
 
-  #タイマー（電池と全画面の判定、2秒ごと）
-  def on_check
-    @last_tick_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-    return unless Platform::API_READY
-    was_paused = @paused
-    battery_paused = @pause_on_battery && Platform.battery_powered?
-    @paused = Platform.foreground_fullscreen?(@hwnd) || battery_paused
-    if was_paused && !@paused
-      advance_frame
-      schedule_tick
-    elsif @paused
-      kill_timer(TIMER_TICK)
-    end
-  end
 
   #スクリーンセーバーのマウス移動（数ピクセルの揺れは無視する。引数lparamは座標）
   def on_mouse_move(lparam)
