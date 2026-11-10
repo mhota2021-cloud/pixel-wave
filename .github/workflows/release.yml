@@ -21,15 +21,14 @@ jobs:
           working-directory: win-ruby
           bundler-cache: true
 
-      - name: Windows版（Ruby）をビルドする
+      - name: Inno Setupを入れる
+        shell: pwsh
+        run: choco install innosetup -y --no-progress
+
+      - name: Windows版（Ruby）のインストーラーをビルドする
         working-directory: win-ruby
         shell: pwsh
         run: ./build.ps1
-
-      - name: スクリーンセーバー用に同じ中身を.scrでも置く
-        working-directory: win-ruby
-        shell: pwsh
-        run: Copy-Item PixelWave.exe PixelWave.scr
 
       - name: Releasesへ置く（無ければ下書きを作る）
         working-directory: win-ruby
@@ -39,7 +38,7 @@ jobs:
         run: |
           gh release view "${{ github.ref_name }}" 2>$null
           if ($LASTEXITCODE -ne 0) { gh release create "${{ github.ref_name }}" --title "Pixel Wave ${{ github.ref_name }}" --notes "" }
-          gh release upload "${{ github.ref_name }}" PixelWave.exe PixelWave.scr --clobber
+          gh release upload "${{ github.ref_name }}" Output/PixelWaveSetup.exe --clobber
 
   build:
     strategy:

@@ -43,14 +43,25 @@ bundle exec ruby -Itest -e "Dir['test/test_*.rb'].each { |f| require File.expand
 
 ## ビルド
 
+Inno Setup 6（`winget install JRSoftware.InnoSetup`）を入れ、
+PowerShell 7で実行します（5.1はBOM無しのUTF-8を読めません）。
+
 ```powershell
-.\build.ps1
+bundle exec pwsh -File .\build.ps1
 ```
 
-`ocran` でRuby本体と `../assets/` の素材をまとめ、
-`PixelWave.exe` を作ります。スクリーンセーバー用の
-`PixelWave.scr` は同じファイルのコピーです（タグを押した
-ときのGitHub Actionsが両方をReleasesに置きます）。
+`ocran` の `--innosetup` でRuby本体と `../assets/` の素材を
+まとめ、インストーラー `Output\PixelWaveSetup.exe` を作ります。
+管理者権限なしで `%LOCALAPPDATA%\Programs\PixelWave` に入り、
+アンインストールは「設定 → アプリ」からできます。タグを
+押したときのGitHub Actionsが、これをReleasesに置きます。
+
+1つのexeに詰める形（`--innosetup` なし）は使いません。
+起動のたびに `%TEMP%` へ展開して実行する動きがマルウェアと
+似ていて、別のPCでDefenderに消されたためです（2026-11-10）。
+「スクリーンセーバーにする」は、入れたフォルダの
+`PixelWave.exe` を同じフォルダへ `PixelWave.scr` として写します
+（隣の `bin\`・`src\` を使って起動するため）。
 
 ## 仕組み
 

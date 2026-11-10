@@ -13,6 +13,13 @@ def paintings_dir(app_root)
   candidates.find { |c| File.exist?(File.join(c, 'credits.json')) } || candidates.first
 end
 
+#ocranがexeを作るときは、使う部品を読み込ませるだけで終わる（画面を開くとビルドが止まるため）
+if defined?(Ocran)
+  require_relative 'lib/display_window'
+  require_relative 'lib/settings_window'
+  exit(0)
+end
+
 begin
   mode = Args.parse_mode(ARGV)
   app_root = __dir__

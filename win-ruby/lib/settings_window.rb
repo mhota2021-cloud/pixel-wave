@@ -482,7 +482,8 @@ class SettingsWindow < NativeWindow
   def register_screensaver
     exe = ENV['OCRAN_EXECUTABLE']
     return if exe.nil?
-    dest = File.join(@data_dir, 'PixelWave.scr')
+    #インストーラー版のexeは隣のbin・srcを使って起動するので、.scrも同じフォルダに置く
+    dest = File.join(File.dirname(exe), 'PixelWave.scr')
     FileUtils.cp(exe, dest)
     Platform.register_screensaver(dest)
     spawn('control', 'desk.cpl,,@screensaver')
