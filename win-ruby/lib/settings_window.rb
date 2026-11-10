@@ -187,11 +187,16 @@ class SettingsWindow < NativeWindow
     @buffer.fill_all(BG)
     draw_preview(rects)
     draw_grid(rects, cards)
-    autostart_label = @settings['autostart'] ? 'ログイン時：壁紙を起動する' : 'ログイン時：起動しない'
-    draw_button(rects[:autostart], autostart_label, :normal, @hover == :autostart)
+    autostart_active = @settings['autostart']
+    autostart_label = autostart_active ? 'ログイン時：壁紙を起動  ● ON' : 'ログイン時：起動しない  ○ OFF'
+    draw_toggle_button(rects[:autostart], autostart_label, autostart_active, @hover == :autostart)
     draw_button(rects[:add], '＋', :normal, @hover == :add)
-    draw_button(rects[:wallpaper], @settings['wallpaper'] ? '壁紙を止める' : '壁紙にする', :accent, @hover == :wallpaper)
-    draw_button(rects[:saver], 'スクリーンセーバーにする', :normal, @hover == :saver)
+    wallpaper_active = @settings['wallpaper']
+    wallpaper_label = wallpaper_active ? '壁紙を止める  ● ON' : '壁紙にする  ○ OFF'
+    draw_toggle_button(rects[:wallpaper], wallpaper_label, wallpaper_active, @hover == :wallpaper)
+    saver_active = Platform.screensaver_active?
+    saver_label = saver_active ? 'スクリーンセーバー  ● ON' : 'スクリーンセーバー  ○ OFF'
+    draw_toggle_button(rects[:saver], saver_label, saver_active, @hover == :saver)
   end
 
   #プレビューを描く（引数rectsは配置）
