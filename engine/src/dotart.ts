@@ -1,8 +1,16 @@
 //描画エンジンの純粋関数を集めたファイル（切り抜きと減色と波の判定とイージングと並び替え）
 //このファイルは画面描画に触れないので単体テストで確かめられる
 
-//切り抜き位置（上か中央か下）
-export type Crop = "top" | "center" | "bottom";
+//正規化座標による切り抜き（割合0.0～1.0）
+export interface NormalizedCrop {
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+}
+
+//切り抜き位置（上か中央か下、または正規化矩形）
+export type Crop = "top" | "center" | "bottom" | NormalizedCrop;
 
 //絵の指定（idは識別子、srcは画像の場所、cropは切り抜き位置で省略すると中央になる）
 export interface Painting {
@@ -51,6 +59,14 @@ export function computeCropRect(
   targetAspect: number,
   crop: Crop,
 ): CropRect {
+  if (typeof crop === "object" && crop !== null) {
+    return {
+      sx: Math.round(imageWidth * crop.x),
+      sy: Math.round(imageHeight * crop.y),
+      sw: Math.round(imageWidth * crop.w),
+      sh: Math.round(imageHeight * crop.h),
+    };
+  }
   const ratio = imageWidth / imageHeight;
   let sw = imageWidth;
   let sh = imageHeight;

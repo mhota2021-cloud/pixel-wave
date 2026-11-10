@@ -30,10 +30,15 @@ describe("computeCropRect", () => {
     expect(center.sy).toBe(Math.floor((600 - 133) / 2));
   });
 
-  it("縦横比が合う画像は切らない", () => {
-    const rect = computeCropRect(300, 200, 3 / 2, "center");
-    expect(rect).toEqual({ sx: 0, sy: 0, sw: 300, sh: 200 });
-  });
+it("縦横比が合う画像は切らない", () => {
+  const rect = computeCropRect(300, 200, 3 / 2, "center");
+  expect(rect).toEqual({ sx: 0, sy: 0, sw: 300, sh: 200 });
+});
+
+it("正規化座標（割合）の指定ならその範囲を切り抜く", () => {
+  const rect = computeCropRect(1000, 800, 16 / 9, { x: 0.1, y: 0.2, w: 0.8, h: 0.5 });
+  expect(rect).toEqual({ sx: 100, sy: 160, sw: 800, sh: 400 });
+});
 });
 
 describe("kmeansQuantize", () => {
