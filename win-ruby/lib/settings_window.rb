@@ -183,6 +183,8 @@ class SettingsWindow < NativeWindow
     draw_grid(rects, cards)
     battery_label = @settings['pauseOnBattery'] ? 'バッテリー時：一時停止' : 'バッテリー時：常に動かす'
     draw_button(rects[:battery], battery_label, :normal, @hover == :battery)
+    autostart_label = @settings['autostart'] ? 'ログイン時：壁紙を起動する' : 'ログイン時：起動しない'
+    draw_button(rects[:autostart], autostart_label, :normal, @hover == :autostart)
     draw_button(rects[:add], '＋', :normal, @hover == :add)
     draw_button(rects[:wallpaper], @settings['wallpaper'] ? '壁紙を止める' : '壁紙にする', :accent, @hover == :wallpaper)
     draw_button(rects[:saver], 'スクリーンセーバーにする', :normal, @hover == :saver)
@@ -342,6 +344,10 @@ class SettingsWindow < NativeWindow
     when :battery
       @settings['pauseOnBattery'] = !@settings['pauseOnBattery']
       persist
+    when :autostart
+      @settings['autostart'] = !@settings['autostart']
+      apply_autostart
+      persist
     when :add
       add_images_via_dialog
     when :wallpaper
@@ -460,7 +466,18 @@ class SettingsWindow < NativeWindow
     pid = spawn(*command, [:out, :err] => [err_log, 'a'])
     Process.detach(pid)
     File.write(File.join(@data_dir, 'wallpaper.pid'), pid.to_s)
-    Platform.set_run_entry('PixelWave', command.map { |c| "\"#{c}\"" }.join(' '))
+    @settings['wallpaper'] = true
+    apply_autostart
+  end
+
+  #ログイン時の起動を設定に合わせる（オンで壁紙が動いているときだけ、スタートアップにショートカットを置く）
+  def apply_autostart
+    if @settings['autostart'] && @settings['wallpaper']
+      command = self_command(['--wallpaper'])
+      Platform.create_startup_shortcut(command[0], command[1..])
+    else
+      Platform.delete_startup_shortcut
+    end
   end
 
   #壁紙のプロセスを止める
@@ -471,8 +488,10 @@ class SettingsWindow < NativeWindow
       Platform.kill_process(pid) if pid > 0 && Platform::API_READY
       File.delete(pid_path) rescue nil
     end
+    @settings['wallpaper'] = false
+    apply_autostart
+    #古い版が残したRunの登録を消し、壁紙を書き換えていたときは退避したファイルから元に戻す
     Platform.delete_run_entry('PixelWave')
-    #古い版が壁紙を書き換えていたときだけ、退避したファイルから元に戻す
     Platform.restore_wallpaper
   end
   #スクリーンセーバーとして登録する

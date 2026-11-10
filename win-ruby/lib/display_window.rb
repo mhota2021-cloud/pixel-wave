@@ -44,7 +44,11 @@ class DisplayWindow < NativeWindow
 
   #表示を始める（壁紙の貼り付けは、ウィンドウを作ったこのスレッドで行う）
   def start
-    attach_wallpaper if @mode == :wallpaper
+    if @mode == :wallpaper
+      #ログイン時の起動やインストーラー版の外側のexeを経由しても止められるよう、描く本人の番号を記録する
+      File.write(File.join(Platform.data_dir, 'wallpaper.pid'), Process.pid.to_s) rescue nil
+      attach_wallpaper
+    end
     @engine.request_full_redraw
     advance_frame
     invalidate(nil)

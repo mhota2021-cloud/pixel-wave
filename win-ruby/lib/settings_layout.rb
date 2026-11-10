@@ -18,6 +18,7 @@ module SettingsLayout
     bar_y = MARGIN + PREVIEW_H + 8
     rects[:add] = [width - MARGIN - 44, bar_y, 44, 44]
     rects[:battery] = [MARGIN, bar_y + 4, 250, 36]
+    rects[:autostart] = [MARGIN + 250 + 8, bar_y + 4, 250, 36]
     grid_y = bar_y + 44 + 8
     actions_y = height - MARGIN - ACTIONS_H
     rects[:grid] = [MARGIN, grid_y, width - MARGIN * 2, actions_y - grid_y - 8]
@@ -61,6 +62,7 @@ module SettingsLayout
   #当たり判定（引数rectsは配置、引数cardsは項目と矩形の組、引数mxとmyはマウス位置。戻り値は対象の名前か、カードなら種類と番号）
   def hit_test(rects, cards, mx, my)
     return :battery if inside?(rects[:battery], mx, my)
+    return :autostart if inside?(rects[:autostart], mx, my)
     return :add if inside?(rects[:add], mx, my)
     return :wallpaper if inside?(rects[:wallpaper], mx, my)
     return :saver if inside?(rects[:saver], mx, my)

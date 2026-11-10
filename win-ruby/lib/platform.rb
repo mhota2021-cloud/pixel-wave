@@ -312,17 +312,35 @@ module Platform
     []
   end
 
-  #自動起動の登録をする（引数nameは登録名、引数commandは起動コマンド）
-  def set_run_entry(name, command)
-    require 'win32/registry'
-    Win32::Registry::HKEY_CURRENT_USER.create('Software\Microsoft\Windows\CurrentVersion\Run') do |reg|
-      reg[name] = command
-    end
+  #スタートアップフォルダに置くショートカットの場所
+  def startup_shortcut_path
+    require 'win32ole'
+    folder = WIN32OLE.new('WScript.Shell').SpecialFolders('Startup')
+    File.join(folder, 'Pixel Wave.lnk')
+  end
+
+  #ログイン時に起動するショートカットを作る（引数targetは実行ファイル、引数argsは引数の配列）
+  def create_startup_shortcut(target, args)
+    require 'win32ole'
+    link = WIN32OLE.new('WScript.Shell').CreateShortcut(startup_shortcut_path.tr('/', '\\'))
+    link.TargetPath = target.tr('/', '\\')
+    link.Arguments = args.map { |a| a.include?(' ') ? "\"#{a}\"" : a }.join(' ')
+    link.WorkingDirectory = File.dirname(target).tr('/', '\\')
+    link.Save
+    true
+  rescue StandardError
+    false
+  end
+
+  #ログイン時に起動するショートカットを消す
+  def delete_startup_shortcut
+    path = startup_shortcut_path
+    File.delete(path) if File.exist?(path)
   rescue StandardError
     nil
   end
 
-  #自動起動の登録を消す（引数nameは登録名）
+  #古い版が登録した自動起動（Runキー）を消す（引数nameは登録名）
   def delete_run_entry(name)
     require 'win32/registry'
     Win32::Registry::HKEY_CURRENT_USER.open('Software\Microsoft\Windows\CurrentVersion\Run', Win32::Registry::KEY_WRITE) do |reg|
