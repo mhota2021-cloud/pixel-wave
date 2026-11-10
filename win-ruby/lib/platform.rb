@@ -349,83 +349,12 @@ module Platform
   SPIF_UPDATEINIFILE = 0x01
   SPIF_SENDCHANGE = 0x02
 
-  #元の壁紙の保存ファイル
+  #古い版（2026-11-10より前）が壁紙を書き換える前に退避したファイル
   def backup_wallpaper_path
     File.join(data_dir, 'original_wallpaper.json')
   end
 
-  #現在の壁紙設定を退避して覚える（既に退避済みなら上書きしない）
-  def backup_wallpaper
-    return unless API_READY
-    path = backup_wallpaper_path
-    if File.exist?(path)
-      begin
-        return JSON.parse(File.read(path, encoding: 'UTF-8'))
-      rescue StandardError
-        #破損時は再作成へ進む
-      end
-    end
-
-    require 'win32/registry'
-    require 'json'
-    info = {
-      'wallpaper' => '',
-      'wallpaper_style' => '10',
-      'tile_wallpaper' => '0',
-      'background' => '0 0 0'
-    }
-
-    begin
-      Win32::Registry::HKEY_CURRENT_USER.open('Control Panel\Desktop') do |reg|
-        info['wallpaper'] = (reg['Wallpaper'] rescue '') || ''
-        info['wallpaper_style'] = (reg['WallpaperStyle'] rescue '10') || '10'
-        info['tile_wallpaper'] = (reg['TileWallpaper'] rescue '0') || '0'
-      end
-    rescue StandardError => e
-      warn "Control Panel\\Desktopの読み取りに失敗: #{e.message}"
-    end
-
-    begin
-      Win32::Registry::HKEY_CURRENT_USER.open('Control Panel\Colors') do |reg|
-        info['background'] = (reg['Background'] rescue '0 0 0') || '0 0 0'
-      end
-    rescue StandardError => e
-      warn "Control Panel\\Colorsの読み取りに失敗: #{e.message}"
-    end
-
-    File.write(path, JSON.pretty_generate(info), encoding: 'UTF-8')
-    info
-  rescue StandardError => e
-    warn "壁紙設定のバックアップに失敗: #{e.message}"
-    nil
-  end
-
-  #デスクトップの壁紙画像を設定する
-  def set_desktop_wallpaper(image_path, style = '10')
-    return false unless API_READY
-    return false unless File.exist?(image_path)
-
-    require 'win32/registry'
-    begin
-      Win32::Registry::HKEY_CURRENT_USER.open('Control Panel\Desktop', Win32::Registry::KEY_WRITE) do |reg|
-        reg['WallpaperStyle'] = style.to_s
-        reg['TileWallpaper'] = '0'
-      end
-    rescue StandardError => e
-      warn "レジストリ書き込み失敗: #{e.message}"
-    end
-
-    path_w = wide(image_path)
-    ptr = Fiddle::Pointer.malloc(path_w.bytesize)
-    ptr[0, path_w.bytesize] = path_w
-    res = SystemParametersInfoW(SPI_SETDESKWALLPAPER, 0, ptr, SPIF_UPDATEINIFILE | SPIF_SENDCHANGE)
-    res != 0
-  rescue StandardError => e
-    warn "壁紙画像の設定に失敗: #{e.message}"
-    false
-  end
-
-  #元の壁紙設定に復元する
+  #古い版が退避した壁紙設定に戻す（ファイルが無ければ何もしない）
   def restore_wallpaper
     return false unless API_READY
     path = backup_wallpaper_path

@@ -452,12 +452,8 @@ class SettingsWindow < NativeWindow
   end
 
   #壁紙のプロセスを起動する
+  #Windowsの壁紙は書き換えない（ドット絵のウィンドウが写真の手前を覆うため不要で、書き換えるとDefenderに怪しまれる）
   def start_wallpaper
-    Platform.backup_wallpaper
-    sample_item = items.find { |it| @settings['enabled'].include?(it[:id]) } || items.first
-    if sample_item && sample_item[:path] && File.exist?(sample_item[:path])
-      Platform.set_desktop_wallpaper(sample_item[:path])
-    end
     Platform.ensure_wallpaper_prerequisites
     command = self_command(['--wallpaper'])
     err_log = File.join(@data_dir, 'wallpaper_error.log')
@@ -476,6 +472,7 @@ class SettingsWindow < NativeWindow
       File.delete(pid_path) rescue nil
     end
     Platform.delete_run_entry('PixelWave')
+    #古い版が壁紙を書き換えていたときだけ、退避したファイルから元に戻す
     Platform.restore_wallpaper
   end
   #スクリーンセーバーとして登録する
