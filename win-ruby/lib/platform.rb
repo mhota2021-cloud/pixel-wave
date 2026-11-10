@@ -296,14 +296,63 @@ module Platform
     nil
   end
 
-  #スクリーンセーバーとして登録する（引数pathは.scrの場所）
-  def register_screensaver(path)
-    require 'win32/registry'
-    Win32::Registry::HKEY_CURRENT_USER.create('Control Panel\Desktop') do |reg|
-      reg['SCRNSAVE.EXE'] = path
-      reg['ScreenSaveActive'] = '1'
+  #スクリーンセーバーのファイル（PixelWave.scr）の場所を返す
+  def screensaver_path
+    if ENV['OCRAN_EXECUTABLE']
+      exe = ENV['OCRAN_EXECUTABLE']
+      scr = File.join(File.dirname(exe), 'PixelWave.scr')
+      FileUtils.cp(exe, scr) unless File.exist?(scr)
+      scr
+    else
+      local_scr = File.expand_path('~/AppData/Local/Programs/PixelWave/PixelWave.scr')
+      File.exist?(local_scr) ? local_scr : nil
     end
   rescue StandardError
     nil
   end
+
+  #スクリーンセーバーが有効（PixelWaveが設定されている）か調べる
+  def screensaver_active?
+    require 'win32/registry'
+    active = false
+    Win32::Registry::HKEY_CURRENT_USER.open('Control Panel\Desktop') do |reg|
+      scr = (reg['SCRNSAVE.EXE'] rescue nil)
+      active_flag = (reg['ScreenSaveActive'] rescue '0')
+      active = (active_flag == '1' && scr && File.basename(scr).downcase == 'pixelwave.scr')
+    end
+    active
+  rescue StandardError
+    false
+  end
+
+  #スクリーンセーバーを有効化する（引数pathは.scrの場所、nilなら既定の場所）
+  def enable_screensaver(path = nil)
+    scr = path || screensaver_path
+    return false unless scr && File.exist?(scr)
+    require 'win32/registry'
+    Win32::Registry::HKEY_CURRENT_USER.create('Control Panel\Desktop') do |reg|
+      reg['SCRNSAVE.EXE'] = scr.gsub('/', 92.chr)
+      reg['ScreenSaveActive'] = '1'
+      reg['ScreenSaveTimeOut'] = '600' unless (reg['ScreenSaveTimeOut'] rescue nil)
+    end
+    SystemParametersInfoW(17, 1, nil, 2) rescue nil
+    true
+  rescue StandardError
+    false
+  end
+
+  #スクリーンセーバーを無効化する
+  def disable_screensaver
+    require 'win32/registry'
+    Win32::Registry::HKEY_CURRENT_USER.create('Control Panel\Desktop') do |reg|
+      reg['ScreenSaveActive'] = '0'
+    end
+    SystemParametersInfoW(17, 0, nil, 2) rescue nil
+    true
+  rescue StandardError
+    false
+  end
+
+  #スクリーンセーバーとして登録する（互換用）
+  alias register_screensaver enable_screensaver
 end

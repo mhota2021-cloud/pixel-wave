@@ -17,16 +17,21 @@ module Loader
 
   #使う絵の一覧を作る（引数settingsは設定、引数paintings_dirは素材のフォルダ、引数data_dirはデータフォルダ。戻り値はidとpathとcropの組の配列）
   def paintings(settings, paintings_dir, data_dir)
+    builtin_crops = settings['builtinCrop'] || {}
     list = []
     credits(paintings_dir).each do |c|
       next unless settings['enabled'].include?(c['id'])
       path = File.join(paintings_dir, c['file'])
-      list << { id: c['id'], path: path, crop: (c['crop'] || 'center').to_sym } if File.exist?(path)
+      crop = builtin_crops[c['id']] || c['crop'] || 'center'
+      crop = crop.to_sym if crop.is_a?(String)
+      list << { id: c['id'], path: path, crop: crop } if File.exist?(path)
     end
     settings['userImages'].each do |u|
       next unless settings['enabled'].include?(u['id'])
       path = File.join(data_dir, 'user-images', u['file'])
-      list << { id: u['id'], path: path, crop: :center } if File.exist?(path)
+      crop = u['crop'] || 'center'
+      crop = crop.to_sym if crop.is_a?(String)
+      list << { id: u['id'], path: path, crop: crop } if File.exist?(path)
     end
     list
   end
@@ -34,7 +39,8 @@ module Loader
   #絵をドット絵データにする（引数paintingは絵の情報、引数colsとrowsはドットの数、引数cache_dirはキャッシュのフォルダ、引数decodeは画像を読む手続きで幅と高さと色の配列を返す。戻り値はパレットと番号の組、読めなければnil）
   def grid_for(painting, cols, rows, cache_dir, decode)
     mtime = File.mtime(painting[:path])
-    cached = DotCache.read(cache_dir, painting[:id], mtime, cols, rows)
+    cache_id = painting[:crop].is_a?(Hash) ? "#{painting[:id]}_#{painting[:crop].hash.abs}" : painting[:id]
+    cached = DotCache.read(cache_dir, cache_id, mtime, cols, rows)
     return cached if cached
     w, h, pixels = decode.call(painting[:path])
     rect = DotArt.croprect(w, h, cols, rows, painting[:crop])
@@ -42,7 +48,7 @@ module Loader
     dots = DotArt.shrink(cropped, cw, ch, cols, rows)
     palette, indices = DotArt.kmeans(dots, 16, 42)
     data = { palette: palette, indices: indices }
-    DotCache.write(cache_dir, painting[:id], mtime, cols, rows, data)
+    DotCache.write(cache_dir, cache_id, mtime, cols, rows, data)
     data
   rescue StandardError => e
     warn "画像を読み込めませんでした：#{painting[:path]}（#{e.message}）"

@@ -17,6 +17,16 @@ class TestDotArt < Minitest::Test
     assert_in_delta 133, y, 1
   end
 
+#ハッシュで正規化座標を指定した場合、割合に応じた実ピクセル矩形が返る
+def test_croprect_custom_hash
+  rect = DotArt.croprect(1000, 800, 16, 9, { 'x' => 0.1, 'y' => 0.2, 'w' => 0.5, 'h' => 0.4 })
+  assert_equal [100, 160, 500, 320], rect
+
+  # 範囲外指定時のクランプ
+  clamped = DotArt.croprect(1000, 800, 16, 9, { 'x' => -0.1, 'y' => 0.9, 'w' => 1.5, 'h' => 0.5 })
+  assert_equal [0, 720, 1000, 80], clamped
+end
+
   #縮小はマスごとの平均になる（555÷4＝138.75を四捨五入して139）
   def test_shrink_average
     pixels = [[0, 0, 0], [100, 100, 100], [200, 200, 200], [255, 255, 255]]

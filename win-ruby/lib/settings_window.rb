@@ -5,6 +5,7 @@ require 'securerandom'
 require_relative 'window'
 require_relative 'engine'
 require_relative 'loader'
+require_relative 'crop_window'
 require_relative 'wic'
 require_relative 'platform'
 require_relative 'settings'
@@ -139,12 +140,18 @@ class SettingsWindow < NativeWindow
   end
 
   #一覧の項目を作る（素材と追加した画像）
+  #一覧の項目を作る（素材と追加した画像）
   def items
+    builtin_crops = @settings['builtinCrop'] || {}
     list = @credits.map do |c|
-      { id: c['id'], title: c['title'], artist: c['artist'], path: File.join(@paintings_dir, c['file']), builtin: true }
+      crop = builtin_crops[c['id']] || c['crop'] || 'center'
+      crop = crop.to_sym if crop.is_a?(String)
+      { id: c['id'], title: c['title'], artist: c['artist'], path: File.join(@paintings_dir, c['file']), crop: crop, builtin: true }
     end
     @settings['userImages'].each do |u|
-      list << { id: u['id'], title: u['title'], artist: '', path: File.join(@data_dir, 'user-images', u['file']), builtin: false }
+      crop = u['crop'] || 'center'
+      crop = crop.to_sym if crop.is_a?(String)
+      list << { id: u['id'], title: u['title'], artist: '', path: File.join(@data_dir, 'user-images', u['file']), crop: crop, builtin: false }
     end
     list
   end
@@ -218,19 +225,28 @@ class SettingsWindow < NativeWindow
   end
 
   #カードを描く（引数itemは項目、引数rectは矩形）
+  #カードを描く（引数itemは項目、引数rectは矩形）
   def draw_card(item, rect)
     return if item.nil?
     x, y, w, h = rect
     @buffer.fill(rect, SURFACE)
     thumb = thumb_for(item)
     if thumb
-      sx, sy, sw, sh = DotArt.croprect(thumb[:w], thumb[:h], 16, 9, :center)
+      sx, sy, sw, sh = DotArt.croprect(thumb[:w], thumb[:h], 16, 9, item[:crop] || :center)
       Platform.StretchDIBits(@buffer.dc, x, y, w, SettingsLayout::THUMB_H, sx, sy, sw, sh, thumb[:bits], thumb[:info], 0, Platform::SRCCOPY)
     end
     checked = @settings['enabled'].include?(item[:id])
     @buffer.fill([x + 6, y + 6, 26, 26], PREVIEW_BG)
     draw_text('✓', [x + 6, y + 4, 26, 26], @font_body, CHECK, DT_CENTER | DT_SINGLELINE) if checked
-    draw_text('×', [x + w - 30, y + 2, 26, 26], @font_body, FG, DT_CENTER | DT_SINGLELINE) unless item[:builtin]
+    if item[:builtin]
+      @buffer.fill([x + w - 30, y + 4, 26, 26], PREVIEW_BG)
+      draw_text('✂', [x + w - 30, y + 3, 26, 26], @font_body, FG, DT_CENTER | DT_SINGLELINE)
+    else
+      @buffer.fill([x + w - 30, y + 4, 26, 26], PREVIEW_BG)
+      draw_text('×', [x + w - 30, y + 2, 26, 26], @font_body, FG, DT_CENTER | DT_SINGLELINE)
+      @buffer.fill([x + w - 62, y + 4, 26, 26], PREVIEW_BG)
+      draw_text('✂', [x + w - 62, y + 3, 26, 26], @font_body, FG, DT_CENTER | DT_SINGLELINE)
+    end
     lines = wrap_text(item[:title], w - 12, 2)
     lines.each_with_index do |line, i|
       draw_text(line, [x + 6, y + SettingsLayout::THUMB_H + 4 + i * 19, w - 12, 19], @font_body, FG, DT_SINGLELINE | DT_NOPREFIX)
@@ -240,8 +256,20 @@ class SettingsWindow < NativeWindow
     end
   end
 
-  #ボタンを描く（引数rectは矩形、引数labelは文字、引数kindは種類、引数hoverは上に乗っているかどうか）
-  def draw_button(rect, label, kind, hover)
+#トグルボタンを描く（引数rectは矩形、引数labelは文字、引数activeはオンかどうか、引数hoverは上に乗っているかどうか）
+def draw_toggle_button(rect, label, active, hover)
+  base = if active
+           hover ? ACCENT_HOVER : ACCENT
+         else
+           hover ? SURFACE_HOVER : SURFACE
+         end
+  text_color = active ? [255, 255, 255] : (hover ? [240, 240, 240] : [190, 190, 190])
+  @buffer.fill(rect, base)
+  draw_text(label, rect, @font_button, text_color, DT_CENTER | DT_VCENTER | DT_SINGLELINE)
+end
+
+#ボタンを描く（引数rectは矩形、引数labelは文字、引数kindは種類、引数hoverは上に乗っているかどうか）
+def draw_button(rect, label, kind, hover)
     base = if kind == :accent
              hover ? ACCENT_HOVER : ACCENT
            else
@@ -332,6 +360,7 @@ class SettingsWindow < NativeWindow
   end
 
   #クリックの処理（引数lparamは座標）
+  #クリックの処理（引数lparamは座標）
   def on_click(lparam)
     mx, my = mouse_pos(lparam)
     list = items
@@ -347,12 +376,14 @@ class SettingsWindow < NativeWindow
     when :wallpaper
       toggle_wallpaper
     when :saver
-      register_screensaver
+      toggle_screensaver
     when Array
       kind, index = target
       item = list[index]
       if kind == :delete && !item[:builtin]
         delete_user_image(item)
+      elsif (kind == :delete && item[:builtin]) || kind == :crop
+        edit_image_crop(item)
       elsif kind == :card
         toggle_check(item)
       end
@@ -407,21 +438,50 @@ class SettingsWindow < NativeWindow
   end
 
   #ファイルを選んで画像を足す
+  #ファイルを選んで画像を足す（切り取り範囲を調整してから保存する）
   def add_images_via_dialog
     paths = Platform::API_READY ? Platform.open_image_dialog : []
+    added = false
     paths.each do |path|
       ext = File.extname(path).downcase
       next unless %w[.jpg .jpeg .png].include?(ext)
+
+      crop_win = CropWindow.new(image_path: path, parent_hwnd: @hwnd)
+      crop = crop_win.run_modal
+      next if crop.nil?
+
       id = "user_#{SecureRandom.hex(3)}"
       file = "#{id}#{ext}"
       dest_dir = File.join(@data_dir, 'user-images')
       FileUtils.mkdir_p(dest_dir)
       FileUtils.cp(path, File.join(dest_dir, file))
       title = File.basename(path, ext)
-      @settings['userImages'] << { 'id' => id, 'file' => file, 'title' => title }
+      @settings['userImages'] << { 'id' => id, 'file' => file, 'title' => title, 'crop' => crop }
       @settings['enabled'] << id
+      added = true
     end
-    persist unless paths.empty?
+    if added
+      persist
+      build_preview
+    end
+  end
+
+  #画像の切り取り位置を変更する
+  def edit_image_crop(item)
+    crop_win = CropWindow.new(image_path: item[:path], initial_crop: item[:crop], parent_hwnd: @hwnd)
+    crop = crop_win.run_modal
+    return if crop.nil?
+
+    if item[:builtin]
+      @settings['builtinCrop'] ||= {}
+      @settings['builtinCrop'][item[:id]] = crop
+    else
+      target = @settings['userImages'].find { |u| u['id'] == item[:id] }
+      target['crop'] = crop if target
+    end
+    persist
+    @thumbs.delete(item[:id])
+    build_preview
   end
 
   #壁紙プロセスの実際の状態と設定を合わせる

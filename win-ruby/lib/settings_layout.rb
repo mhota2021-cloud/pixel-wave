@@ -17,11 +17,11 @@ module SettingsLayout
     rects[:preview] = [MARGIN, MARGIN, width - MARGIN * 2, PREVIEW_H]
     bar_y = MARGIN + PREVIEW_H + 8
     rects[:add] = [width - MARGIN - 44, bar_y, 44, 44]
-    rects[:autostart] = [MARGIN, bar_y + 4, 250, 36]
+    rects[:autostart] = [MARGIN, bar_y + 4, 280, 36]
     grid_y = bar_y + 44 + 8
     actions_y = height - MARGIN - ACTIONS_H
     rects[:grid] = [MARGIN, grid_y, width - MARGIN * 2, actions_y - grid_y - 8]
-    wallpaper_w = (width - MARGIN * 2 - 8) * 55 / 100
+    wallpaper_w = (width - MARGIN * 2 - 8) / 2
     rects[:wallpaper] = [MARGIN, actions_y, wallpaper_w, ACTIONS_H]
     saver_x = MARGIN + wallpaper_w + 8
     rects[:saver] = [saver_x, actions_y, width - MARGIN - saver_x, ACTIONS_H]
@@ -69,6 +69,7 @@ module SettingsLayout
       next unless inside?(rect, mx, my)
       x, y, w, _h = rect
       return [:delete, index] if inside?([x + w - 30, y, 30, 32], mx, my)
+      return [:crop, index] if inside?([x + w - 62, y, 30, 32], mx, my)
       return [:card, index]
     end
     nil

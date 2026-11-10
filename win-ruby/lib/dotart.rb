@@ -2,8 +2,27 @@
 module DotArt
   module_function
 
-  #切り抜き範囲を返す（引数src_wとsrc_hは元の大きさ、引数target_wとtarget_hは目標の縦横比、引数cropは位置でtopかcenterかbottom。戻り値は左上のxとyと幅と高さ）
+  #切り抜き範囲を返す（引数src_wとsrc_hは元の大きさ、引数target_wとtarget_hは目標の縦横比、引数cropは位置（top/center/bottomまたは正規化座標ハッシュ）。戻り値は左上のxとyと幅と高さ）
   def croprect(src_w, src_h, target_w, target_h, crop)
+    if crop.is_a?(Hash)
+      nx = (crop['x'] || crop[:x] || 0.0).to_f
+      ny = (crop['y'] || crop[:y] || 0.0).to_f
+      nw = (crop['w'] || crop[:w] || 1.0).to_f
+      nh = (crop['h'] || crop[:h] || 1.0).to_f
+
+      x = (src_w * nx).round
+      y = (src_h * ny).round
+      w = (src_w * nw).round
+      h = (src_h * nh).round
+
+      x = [[x, 0].max, src_w - 1].min
+      y = [[y, 0].max, src_h - 1].min
+      w = [[w, 1].max, src_w - x].min
+      h = [[h, 1].max, src_h - y].min
+      return [x, y, w, h]
+    end
+
+    crop_sym = crop.is_a?(String) ? crop.to_sym : crop
     target_aspect = target_w.to_f / target_h
     src_aspect = src_w.to_f / src_h
     if src_aspect > target_aspect
@@ -15,7 +34,7 @@ module DotArt
       w = src_w
       h = (src_w / target_aspect).round
       x = 0
-      y = case crop
+      y = case crop_sym
           when :top then 0
           when :bottom then src_h - h
           else (src_h - h) / 2
