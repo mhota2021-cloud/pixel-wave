@@ -120,3 +120,27 @@ Museの報告は、そのまま信じない。これまでに次の食い違い�
 #### 解決（Claude Code、2026-11-09）
 - 「分かったこと」の26H2の手順に直し、アイコンの後ろでドット絵が動き、次の絵へ波で切り替わることを撮って確かめた。失敗1との差は、レイヤードを付ける順番と、WorkerWを奥へ移す手順である。
 - `display_window.rb`の、全メッセージを`wallpaper_debug.log`に書く調査用の行を消した。
+
+### Antigravityでの作業履歴（2026-11-10）
+
+#### 1. 切り取り範囲調整機能（CropWindow）の新設とGDI描画バグの解決
+- **機能**: 設定画面の画像カード右上「✂」ボタンから、モニター比率で切り取り枠をドラッグ移動・四隅リサイズできるモーダルウィンドウ（`CropWindow`）を新設。
+- **GDIのY座標反転バグの解消**:
+  - `StretchDIBits` はトップダウンDIB（`biHeight < 0`）に対して `ySrc > 0` を渡すと下端基準（ボトムアップ）で計算するWindows GDI既知のバグがあり、青枠内の画像が上下反転して顔が2重にズレる問題が発生。
+  - 部分転送をやめ、Windows標準のクリッピング領域（`CreateRectRgn` と `SelectClipRgn`）で枠内だけを描画可能領域とし、全体画像（`ySrc = 0`）を重ねて描画する方式に変更して1ピクセルもズレない完全一致を実現。
+
+#### 2. 初期名画8作品の構図最適化
+- ユーザーが切り取り画面で微調整した全8作品の最適な切り取り座標（割合）を `assets/paintings/credits.json` に反映。
+- 新規インストール時や設定初期化時でも、主題（顔やメインモチーフ）が綺麗に中央に収まる構図を初期値とした。
+
+#### 3. 設定画面の主要ボタントグル化とスクリーンセーバー制御
+- `platform.rb` にレジストリ（`SCRNSAVE.EXE` / `ScreenSaveActive`）を操作してシステムに即時反映する `screensaver_active?`, `enable_screensaver`, `disable_screensaver` を新設。
+- 設定画面の3つの操作ボタン（ログイン時起動・壁紙・スクリーンセーバー）を `draw_toggle_button` でトグルUI（青色＋`● ON` / グレー＋`○ OFF`）に統一。
+- 下部ボタン（壁紙とスクリーンセーバー）を左右50%ずつの均等配置に調整。
+
+#### 4. TypeScriptエンジンの型拡張とCIオールグリーン
+- `credits.json` の `crop` 変更に伴い、TypeScriptエンジン（`engine/src/dotart.ts`）に `NormalizedCrop`（`{ x, y, w, h }`）を追加し、`computeCropRect` を対応。
+- 単体テスト（17件）とアプリ側の型チェック（`tsc --noEmit`）を通過させ、GitHub Actions CI（Windows / Ubuntu / macOS）の全ジョブ通過（ALL GREEN）を確認。
+
+#### 5. インストーラー
+- 最新コード・新構図・トグルUIを含んだインストーラー `win-ruby/Output/PixelWaveSetup.exe` を再ビルド済み。
