@@ -53,6 +53,11 @@ class SettingsWindow < NativeWindow
     @engine_time = 0.0
     @last_tick_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     sync_wallpaper_state
+    @switch_anims = {
+      autostart: (@settings['autostart'] ? 1.0 : 0.0),
+      wallpaper: (@settings['wallpaper'] ? 1.0 : 0.0),
+      saver: (Platform.screensaver_active? ? 1.0 : 0.0)
+    }
     build_preview
   end
 
@@ -139,21 +144,27 @@ class SettingsWindow < NativeWindow
     apply_preview_changes(@engine.frame(@engine_time))
   end
 
-  #一覧の項目を作る（素材と追加した画像）
-  #一覧の項目を作る（素材と追加した画像）
+  #一覧の項目を作る（追加した画像を先頭にし、非表示の内蔵素材は除く）
   def items
     builtin_crops = @settings['builtinCrop'] || {}
-    list = @credits.map do |c|
-      crop = builtin_crops[c['id']] || c['crop'] || 'center'
-      crop = crop.to_sym if crop.is_a?(String)
-      { id: c['id'], title: c['title'], artist: c['artist'], path: File.join(@paintings_dir, c['file']), crop: crop, builtin: true }
-    end
+    hidden_builtins = @settings['hiddenBuiltin'] || []
+
+    user_list = []
     @settings['userImages'].each do |u|
       crop = u['crop'] || 'center'
       crop = crop.to_sym if crop.is_a?(String)
-      list << { id: u['id'], title: u['title'], artist: '', path: File.join(@data_dir, 'user-images', u['file']), crop: crop, builtin: false }
+      user_list << { id: u['id'], title: u['title'], artist: '', path: File.join(@data_dir, 'user-images', u['file']), crop: crop, builtin: false }
     end
-    list
+
+    builtin_list = []
+    @credits.each do |c|
+      next if hidden_builtins.include?(c['id'])
+      crop = builtin_crops[c['id']] || c['crop'] || 'center'
+      crop = crop.to_sym if crop.is_a?(String)
+      builtin_list << { id: c['id'], title: c['title'], artist: c['artist'], path: File.join(@paintings_dir, c['file']), crop: crop, builtin: true }
+    end
+
+    user_list + builtin_list
   end
 
   #プレビューの変わったドットを裏画面へ塗る（引数changesは変わったドット）
@@ -172,13 +183,46 @@ class SettingsWindow < NativeWindow
   end
 
   #タイマー（プレビューの時間を進める。切り替え中は速く、表示中は間引く）
+  #スイッチの移動アニメーションを進める（引数dtは経過秒数。戻り値は動いているか）
+  def update_switch_animations(dt)
+    targets = {
+      autostart: (@settings['autostart'] ? 1.0 : 0.0),
+      wallpaper: (@settings['wallpaper'] ? 1.0 : 0.0),
+      saver: (Platform.screensaver_active? ? 1.0 : 0.0)
+    }
+    moving = false
+    speed = 9.0
+    targets.each do |key, target|
+      current = @switch_anims[key] || 0.0
+      next if current == target
+      moving = true
+      diff = target - current
+      step = dt * speed
+      if diff.abs <= step
+        @switch_anims[key] = target
+      else
+        @switch_anims[key] = current + (diff > 0 ? step : -step)
+      end
+    end
+    moving
+  end
+
   def on_tick
     now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     dt = now - @last_tick_at
     @last_tick_at = now
     @engine_time += dt
-    apply_preview_changes(@engine.frame(@engine_time))
-    set_timer(TIMER_TICK, @engine.needs_redraw?(@engine_time) ? 16 : 250)
+    anim_moving = update_switch_animations(dt)
+    redraw_all if anim_moving
+    if @engine.needs_redraw?(@engine_time)
+      apply_preview_changes(@engine.frame(@engine_time))
+      set_timer(TIMER_TICK, 16)
+    elsif anim_moving
+      invalidate
+      set_timer(TIMER_TICK, 16)
+    else
+      set_timer(TIMER_TICK, 250)
+    end
   end
 
   #全体を裏画面へ描く
@@ -187,16 +231,12 @@ class SettingsWindow < NativeWindow
     @buffer.fill_all(BG)
     draw_preview(rects)
     draw_grid(rects, cards)
-    autostart_active = @settings['autostart']
-    autostart_label = autostart_active ? 'ログイン時：壁紙を起動  ● ON' : 'ログイン時：起動しない  ○ OFF'
-    draw_toggle_button(rects[:autostart], autostart_label, autostart_active, @hover == :autostart)
+    autostart_label = @settings['autostart'] ? 'ログイン時起動 ON' : 'ログイン時起動 OFF'
+    draw_toggle_button(rects[:autostart], autostart_label, :autostart, @hover == :autostart)
+    draw_button(rects[:solid], '🎨', :normal, @hover == :solid)
     draw_button(rects[:add], '＋', :normal, @hover == :add)
-    wallpaper_active = @settings['wallpaper']
-    wallpaper_label = wallpaper_active ? '壁紙を止める  ● ON' : '壁紙にする  ○ OFF'
-    draw_toggle_button(rects[:wallpaper], wallpaper_label, wallpaper_active, @hover == :wallpaper)
-    saver_active = Platform.screensaver_active?
-    saver_label = saver_active ? 'スクリーンセーバー  ● ON' : 'スクリーンセーバー  ○ OFF'
-    draw_toggle_button(rects[:saver], saver_label, saver_active, @hover == :saver)
+    draw_toggle_button(rects[:wallpaper], '壁紙', :wallpaper, @hover == :wallpaper)
+    draw_toggle_button(rects[:saver], 'スクリーンセーバー', :saver, @hover == :saver)
   end
 
   #プレビューを描く（引数rectsは配置）
@@ -223,34 +263,105 @@ class SettingsWindow < NativeWindow
     Platform.SelectClipRgn(@buffer.dc, rgn)
     list = items
     cards.each do |index, rect|
-      draw_card(list[index], rect)
+      draw_card(list[index], rect, index)
     end
     Platform.SelectClipRgn(@buffer.dc, nil)
     Platform.DeleteObject(rgn)
   end
 
-  #カードを描く（引数itemは項目、引数rectは矩形）
-  #カードを描く（引数itemは項目、引数rectは矩形）
-  def draw_card(item, rect)
+  #チェックボックスを描く（引数rectは矩形、引数checkedは選択中か、引数hoverはホバー中か）
+  def draw_checkbox(rect, checked, hover)
+    x, y, w, h = rect
+    hdc = @buffer.dc
+
+    if checked
+      bg_color = hover ? ACCENT_HOVER : ACCENT
+      border_color = bg_color
+    else
+      bg_color = [24, 24, 30]
+      border_color = hover ? [215, 215, 235] : [135, 135, 150]
+    end
+
+    r_bg, g_bg, b_bg = bg_color
+    r_bd, g_bd, b_bd = border_color
+
+    brush = Platform.CreateSolidBrush(r_bg | (g_bg << 8) | (b_bg << 16))
+    pen = Platform.CreatePen(Platform::PS_SOLID, 2, r_bd | (g_bd << 8) | (b_bd << 16))
+    old_brush = Platform.SelectObject(hdc, brush)
+    old_pen = Platform.SelectObject(hdc, pen)
+
+    Platform.RoundRect(hdc, x, y, x + w, y + h, 6, 6)
+
+    Platform.SelectObject(hdc, old_brush)
+    Platform.SelectObject(hdc, old_pen)
+    Platform.DeleteObject(brush)
+    Platform.DeleteObject(pen)
+
+    if checked
+      draw_text('✓', [x, y, w, h], @font_body, [255, 255, 255], DT_CENTER | DT_VCENTER | DT_SINGLELINE)
+    end
+  end
+
+  #角丸アイコンボタンを描く（引数rectは矩形、引数iconは文字、引数hoverはホバー中か、引数kindは種類）
+  def draw_icon_button(rect, icon, hover, kind = :accent)
+    x, y, w, h = rect
+    hdc = @buffer.dc
+
+    if hover
+      if kind == :danger
+        bg_color = [180, 40, 40]
+        border_color = [220, 80, 80]
+      else
+        bg_color = ACCENT
+        border_color = ACCENT_HOVER
+      end
+      text_color = [255, 255, 255]
+    else
+      bg_color = [24, 24, 30]
+      border_color = [110, 110, 125]
+      text_color = [210, 210, 220]
+    end
+
+    r_bg, g_bg, b_bg = bg_color
+    r_bd, g_bd, b_bd = border_color
+
+    brush = Platform.CreateSolidBrush(r_bg | (g_bg << 8) | (b_bg << 16))
+    pen = Platform.CreatePen(Platform::PS_SOLID, 1, r_bd | (g_bd << 8) | (b_bd << 16))
+    old_brush = Platform.SelectObject(hdc, brush)
+    old_pen = Platform.SelectObject(hdc, pen)
+
+    Platform.RoundRect(hdc, x, y, x + w, y + h, 6, 6)
+
+    Platform.SelectObject(hdc, old_brush)
+    Platform.SelectObject(hdc, old_pen)
+    Platform.DeleteObject(brush)
+    Platform.DeleteObject(pen)
+
+    draw_text(icon, [x, y, w, h], @font_body, text_color, DT_CENTER | DT_VCENTER | DT_SINGLELINE)
+  end
+
+  #カードを描く（引数itemは項目、引数rectは矩形、引数indexは番号）
+  def draw_card(item, rect, index = nil)
     return if item.nil?
     x, y, w, h = rect
-    @buffer.fill(rect, SURFACE)
+    card_hover = index && @hover.is_a?(Array) && @hover[1] == index
+    base = card_hover ? SURFACE_HOVER : SURFACE
+    @buffer.fill(rect, base)
     thumb = thumb_for(item)
     if thumb
       sx, sy, sw, sh = DotArt.croprect(thumb[:w], thumb[:h], 16, 9, item[:crop] || :center)
       Platform.StretchDIBits(@buffer.dc, x, y, w, SettingsLayout::THUMB_H, sx, sy, sw, sh, thumb[:bits], thumb[:info], 0, Platform::SRCCOPY)
     end
     checked = @settings['enabled'].include?(item[:id])
-    @buffer.fill([x + 6, y + 6, 26, 26], PREVIEW_BG)
-    draw_text('✓', [x + 6, y + 4, 26, 26], @font_body, CHECK, DT_CENTER | DT_SINGLELINE) if checked
-    if item[:builtin]
-      @buffer.fill([x + w - 30, y + 4, 26, 26], PREVIEW_BG)
-      draw_text('✂', [x + w - 30, y + 3, 26, 26], @font_body, FG, DT_CENTER | DT_SINGLELINE)
-    else
-      @buffer.fill([x + w - 30, y + 4, 26, 26], PREVIEW_BG)
-      draw_text('×', [x + w - 30, y + 2, 26, 26], @font_body, FG, DT_CENTER | DT_SINGLELINE)
-      @buffer.fill([x + w - 62, y + 4, 26, 26], PREVIEW_BG)
-      draw_text('✂', [x + w - 62, y + 3, 26, 26], @font_body, FG, DT_CENTER | DT_SINGLELINE)
+    draw_checkbox([x + 7, y + 7, 24, 24], checked, card_hover)
+
+    is_solid = item[:id].to_s.start_with?('solid_')
+    del_hover = index && @hover == [:delete, index]
+    crop_hover = index && @hover == [:crop, index]
+
+    draw_icon_button([x + w - 31, y + 7, 24, 24], '×', del_hover, :danger)
+    unless is_solid
+      draw_icon_button([x + w - 61, y + 7, 24, 24], '✂', crop_hover, :accent)
     end
     lines = wrap_text(item[:title], w - 12, 2)
     lines.each_with_index do |line, i|
@@ -261,16 +372,57 @@ class SettingsWindow < NativeWindow
     end
   end
 
-#トグルボタンを描く（引数rectは矩形、引数labelは文字、引数activeはオンかどうか、引数hoverは上に乗っているかどうか）
-def draw_toggle_button(rect, label, active, hover)
-  base = if active
-           hover ? ACCENT_HOVER : ACCENT
-         else
-           hover ? SURFACE_HOVER : SURFACE
-         end
-  text_color = active ? [255, 255, 255] : (hover ? [240, 240, 240] : [190, 190, 190])
+#トグルスイッチボタンを描く（引数rectは矩形、引数labelは文字、引数keyは識別子、引数hoverは乗っているか）
+def draw_toggle_button(rect, label, key, hover)
+  x, y, w, h = rect
+  base = hover ? SURFACE_HOVER : SURFACE
   @buffer.fill(rect, base)
-  draw_text(label, rect, @font_button, text_color, DT_CENTER | DT_VCENTER | DT_SINGLELINE)
+
+  anim_pos = @switch_anims[key] || 0.0
+
+  track_h = h >= 48 ? 26 : 22
+  track_w = (track_h * 1.85).round
+  track_y = y + (h - track_h) / 2
+  track_x = x + w - track_w - 14
+
+  text_rect = [x + 14, y, track_x - x - 20, h]
+  text_color = hover ? [255, 255, 255] : FG
+  font = h >= 48 ? @font_button : @font_body
+  draw_text(label, text_rect, font, text_color, DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX)
+
+  draw_toggle_switch(@buffer.dc, [track_x, track_y, track_w, track_h], anim_pos)
+end
+
+#スイッチのピル形状とノブを描く（引数hdcは描画先、引数track_rectは[x, y, w, h]、引数anim_posは0.0〜1.0）
+def draw_toggle_switch(hdc, track_rect, anim_pos)
+  tx, ty, tw, th = track_rect
+  off_color = [60, 60, 70]
+  on_color = [11, 92, 173]
+  r = (off_color[0] + (on_color[0] - off_color[0]) * anim_pos).round
+  g = (off_color[1] + (on_color[1] - off_color[1]) * anim_pos).round
+  b = (off_color[2] + (on_color[2] - off_color[2]) * anim_pos).round
+
+  brush = Platform.CreateSolidBrush(r | (g << 8) | (b << 16))
+  old_brush = Platform.SelectObject(hdc, brush)
+  null_pen = Platform.GetStockObject(Platform::NULL_PEN)
+  old_pen = Platform.SelectObject(hdc, null_pen)
+
+  Platform.RoundRect(hdc, tx, ty, tx + tw, ty + th, th, th)
+
+  pad = 3
+  knob_d = th - pad * 2
+  travel = tw - knob_d - pad * 2
+  kx = tx + pad + (travel * anim_pos).round
+  ky = ty + pad
+
+  knob_brush = Platform.CreateSolidBrush(0x00FFFFFF)
+  Platform.SelectObject(hdc, knob_brush)
+  Platform.Ellipse(hdc, kx, ky, kx + knob_d, ky + knob_d)
+
+  Platform.SelectObject(hdc, old_brush)
+  Platform.SelectObject(hdc, old_pen)
+  Platform.DeleteObject(brush)
+  Platform.DeleteObject(knob_brush)
 end
 
 #ボタンを描く（引数rectは矩形、引数labelは文字、引数kindは種類、引数hoverは上に乗っているかどうか）
@@ -357,7 +509,11 @@ def draw_button(rect, label, kind, hover)
     mx, my = mouse_pos(lparam)
     rects, cards = SettingsLayout.layout(@width, @height, items.length, @scroll)
     hover = SettingsLayout.hit_test(rects, cards, mx, my)
-    hover = hover[0] if hover.is_a?(Array)
+    if hover.is_a?(Array) && hover[0] == :crop
+      list = items
+      item = list[hover[1]]
+      hover = [:card, hover[1]] if item && item[:id].to_s.start_with?('solid_')
+    end
     return if hover == @hover
     @hover = hover
     redraw_all
@@ -376,18 +532,23 @@ def draw_button(rect, label, kind, hover)
       @settings['autostart'] = !@settings['autostart']
       apply_autostart
       persist
+      set_timer(TIMER_TICK, 16)
+    when :solid
+      add_solid_color_via_dialog
     when :add
       add_images_via_dialog
     when :wallpaper
       toggle_wallpaper
+      set_timer(TIMER_TICK, 16)
     when :saver
       toggle_screensaver
+      set_timer(TIMER_TICK, 16)
     when Array
       kind, index = target
       item = list[index]
-      if kind == :delete && !item[:builtin]
-        delete_user_image(item)
-      elsif (kind == :delete && item[:builtin]) || kind == :crop
+      if kind == :delete
+        delete_item(item)
+      elsif kind == :crop && !item[:id].to_s.start_with?('solid_')
         edit_image_crop(item)
       elsif kind == :card
         toggle_check(item)
@@ -429,12 +590,18 @@ def draw_button(rect, label, kind, hover)
     persist
   end
 
-  #追加した画像を消す（引数itemは項目）
-  def delete_user_image(item)
-    @settings['userImages'] = @settings['userImages'].reject { |u| u['id'] == item[:id] }
+  #項目を削除または非表示にする（引数itemは項目）
+  def delete_item(item)
+    return if item.nil?
+    if item[:builtin]
+      @settings['hiddenBuiltin'] ||= []
+      @settings['hiddenBuiltin'] << item[:id] unless @settings['hiddenBuiltin'].include?(item[:id])
+    else
+      @settings['userImages'] = @settings['userImages'].reject { |u| u['id'] == item[:id] }
+      File.delete(item[:path]) rescue nil
+    end
     @settings['enabled'] = @settings['enabled'].reject { |id| id == item[:id] }
     @thumbs.delete(item[:id])
-    File.delete(item[:path]) rescue nil
     if @settings['enabled'].empty?
       first = items.first
       @settings['enabled'] = [first[:id]] if first
@@ -443,6 +610,40 @@ def draw_button(rect, label, kind, hover)
   end
 
   #ファイルを選んで画像を足す
+  #色を選んで単色画像を足す
+  def add_solid_color_via_dialog
+    rgb = Platform::API_READY ? Platform.choose_color_dialog(@hwnd) : nil
+    return if rgb.nil?
+
+    r, g, b = rgb
+    hex = sprintf('#%02X%02X%02X', r, g, b)
+    id = "solid_#{sprintf('%02x%02x%02x', r, g, b)}_#{SecureRandom.hex(2)}"
+    file = "#{id}.bmp"
+    dest_dir = File.join(@data_dir, 'user-images')
+    FileUtils.mkdir_p(dest_dir)
+    bmp_path = File.join(dest_dir, file)
+    File.binwrite(bmp_path, create_solid_bmp(r, g, b))
+
+    title = "単色 (#{hex})"
+    @settings['userImages'].unshift({ 'id' => id, 'file' => file, 'title' => title, 'crop' => 'center' })
+    @settings['enabled'].unshift(id)
+    persist
+    build_preview
+  end
+
+  #単色のBMP画像データを作る（引数r, g, bは色、引数wとhは大きさ）
+  def create_solid_bmp(r, g, b, w = 16, h = 9)
+    row_bytes = (w * 3 + 3) & ~3
+    image_size = row_bytes * h
+    file_size = 54 + image_size
+    file_header = ['BM', file_size, 0, 0, 54].pack('a2L<S<S<L<')
+    info_header = [40, w, h, 1, 24, 0, image_size, 2835, 2835, 0, 0].pack('L<l<l<S<S<L<L<l<l<L<L<')
+    pad = "\x00" * (row_bytes - w * 3)
+    pixel = [b, g, r].pack('C3')
+    row = (pixel * w) + pad
+    file_header + info_header + (row * h)
+  end
+
   #ファイルを選んで画像を足す（切り取り範囲を調整してから保存する）
   def add_images_via_dialog
     paths = Platform::API_READY ? Platform.open_image_dialog : []
@@ -461,8 +662,8 @@ def draw_button(rect, label, kind, hover)
       FileUtils.mkdir_p(dest_dir)
       FileUtils.cp(path, File.join(dest_dir, file))
       title = File.basename(path, ext)
-      @settings['userImages'] << { 'id' => id, 'file' => file, 'title' => title, 'crop' => crop }
-      @settings['enabled'] << id
+      @settings['userImages'].unshift({ 'id' => id, 'file' => file, 'title' => title, 'crop' => crop })
+      @settings['enabled'].unshift(id)
       added = true
     end
     if added
@@ -547,15 +748,15 @@ def draw_button(rect, label, kind, hover)
     @settings['wallpaper'] = false
     apply_autostart
   end
-  #スクリーンセーバーとして登録する
-  def register_screensaver
-    exe = ENV['OCRAN_EXECUTABLE']
-    return if exe.nil?
-    #インストーラー版のexeは隣のbin・srcを使って起動するので、.scrも同じフォルダに置く
-    dest = File.join(File.dirname(exe), 'PixelWave.scr')
-    FileUtils.cp(exe, dest)
-    Platform.register_screensaver(dest)
-    spawn('control', 'desk.cpl,,@screensaver')
+  #スクリーンセーバーの有効化と無効化を切り替える
+  def toggle_screensaver
+    if Platform.screensaver_active?
+      Platform.disable_screensaver
+    else
+      Platform.enable_screensaver
+    end
+    redraw_all
+    invalidate
   end
 
   #設定を保存してプレビューを作り直す

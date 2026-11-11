@@ -19,6 +19,9 @@ class TestSettingsLayout < Minitest::Test
     sx, sy, sw, _sh = rects[:autostart]
     assert_equal :autostart, SettingsLayout.hit_test(rects, cards, sx + 2, sy + 2)
     assert sx + sw < rects[:add][0], '自動起動のボタンが＋と重ならないこと'
+    assert sx + sw < rects[:solid][0], '自動起動のボタンが単色ボタンと重ならないこと'
+    sol_x, sol_y, _sol_w, _sol_h = rects[:solid]
+    assert_equal :solid, SettingsLayout.hit_test(rects, cards, sol_x + 2, sol_y + 2)
     ax, ay, _aw, _ah = rects[:add]
     assert_equal :add, SettingsLayout.hit_test(rects, cards, ax + 2, ay + 2)
     wx, wy, _ww, _wh = rects[:wallpaper]

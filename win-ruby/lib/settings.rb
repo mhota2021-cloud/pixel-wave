@@ -11,8 +11,10 @@ module AppSettings
       'enabled' => builtin_ids.dup,
       'userImages' => [],
       'wallpaper' => false,
-      'autostart' => false,
-      'builtinCrop' => {}
+      'pauseOnBattery' => true,
+      'autostart' => true,
+      'builtinCrop' => {},
+      'hiddenBuiltin' => []
     }
   end
 
@@ -27,8 +29,10 @@ module AppSettings
         'enabled' => data['enabled'],
         'userImages' => data['userImages'],
         'wallpaper' => data['wallpaper'] ? true : false,
-        'autostart' => data['autostart'] ? true : false,
-        'builtinCrop' => data['builtinCrop'].is_a?(Hash) ? data['builtinCrop'] : {}
+        'pauseOnBattery' => data.key?('pauseOnBattery') ? (data['pauseOnBattery'] ? true : false) : true,
+        'autostart' => data.key?('autostart') ? (data['autostart'] ? true : false) : true,
+        'builtinCrop' => data['builtinCrop'].is_a?(Hash) ? data['builtinCrop'] : {},
+        'hiddenBuiltin' => data['hiddenBuiltin'].is_a?(Array) ? data['hiddenBuiltin'] : []
       }
     rescue StandardError
       begin

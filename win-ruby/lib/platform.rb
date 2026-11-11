@@ -14,7 +14,12 @@ module Platform
     extern 'int EnumWindows(void*, intptr_t)'
     extern 'intptr_t SendMessageTimeoutW(void*, unsigned int, uintptr_t, intptr_t, unsigned int, unsigned int, void*)'
     extern 'void* SetParent(void*, void*)'
+    extern 'void* GetWindow(void*, unsigned int)'
     extern 'int SetWindowPos(void*, void*, int, int, int, int, unsigned int)'
+    extern 'void* GetForegroundWindow()'
+    extern 'int GetWindowRect(void*, void*)'
+    extern 'int GetClassNameW(void*, void*, int)'
+    extern 'int GetSystemPowerStatus(void*)'
     extern 'int GetSystemMetrics(int)'
     extern 'int SetForegroundWindow(void*)'
     extern 'int ShowWindow(void*, int)'
@@ -57,6 +62,10 @@ module Platform
     extern 'int SelectClipRgn(void*, void*)'
     extern 'int GetTextExtentPoint32W(void*, void*, int, void*)'
     extern 'int StretchDIBits(void*, int, int, int, int, int, int, int, int, void*, void*, unsigned int, unsigned int)'
+    extern 'void* GetStockObject(int)'
+    extern 'int RoundRect(void*, int, int, int, int, int, int)'
+    extern 'int Ellipse(void*, int, int, int, int)'
+    extern 'void* CreatePen(int, int, unsigned int)'
     #カーネル
     extern 'void* GetModuleHandleW(void*)'
     extern 'void* CreateMutexW(void*, int, void*)'
@@ -66,6 +75,8 @@ module Platform
     extern 'int CloseHandle(void*)'
     #ファイルを選ぶ画面
     extern 'int GetOpenFileNameW(void*)'
+    #色を選ぶ画面
+    extern 'int ChooseColorW(void*)'
     API_READY = true
   rescue StandardError
     API_READY = false
@@ -79,11 +90,15 @@ module Platform
   WS_EX_TOPMOST = 0x00000008
   GWL_STYLE = -16
   GWL_EXSTYLE = -20
+  SWP_NOSIZE = 0x0001
+  SWP_NOMOVE = 0x0002
   SWP_NOACTIVATE = 0x0010
   SWP_FRAMECHANGED = 0x0020
   SWP_SHOWWINDOW = 0x0040
   LWA_ALPHA = 0x00000002
   SRCCOPY = 0x00CC0020
+  NULL_PEN = 8
+  PS_SOLID = 0
 
   module_function
 
@@ -137,6 +152,42 @@ module Platform
     SetForegroundWindow(hwnd)
   end
 
+  #ウィンドウのクラス名を読む（引数hwndはウィンドウ）
+  def class_name(hwnd)
+    buffer = "\x00" * 512
+    len = GetClassNameW(hwnd, buffer, 256)
+    return '' if len == 0
+    buffer[0, len * 2].force_encoding('UTF-16LE').encode('UTF-8')
+  rescue StandardError
+    ''
+  end
+
+  #前面のアプリが全画面か調べる（引数own_hwndは自ウィンドウで、自分は除く）
+  def foreground_fullscreen?(own_hwnd)
+    fg = GetForegroundWindow()
+    return false if fg.nil? || fg.null?
+    return false if own_hwnd && fg.to_i == own_hwnd.to_i
+    name = class_name(fg)
+    return false if %w[Progman WorkerW Shell_TrayWnd Shell_SecondaryTrayWnd].include?(name)
+    buffer = "\x00" * 16
+    return false if GetWindowRect(fg, buffer) == 0
+    left, top, right, bottom = buffer.unpack('l<4')
+    sw = GetSystemMetrics(0)
+    sh = GetSystemMetrics(1)
+    left <= 0 && top <= 0 && right >= sw && bottom >= sh
+  rescue StandardError
+    false
+  end
+
+  #電池で動いているか調べる（交流電源につながっていないとき真）
+  def battery_powered?
+    buffer = "\x00" * 12
+    return false if GetSystemPowerStatus(buffer) == 0
+    buffer.getbyte(0) == 0
+  rescue StandardError
+    false
+  end
+
 
 #壁紙用の受け皿ウィンドウ（WorkerW）を探す（Lively Wallpaperの手法）
   def find_workerw
@@ -183,13 +234,45 @@ module Platform
     SetWindowLongPtrW(hwnd, GWL_EXSTYLE, ex_style | WS_EX_LAYERED)
     SetLayeredWindowAttributes(hwnd, 0, 255, LWA_ALPHA)
     SetWindowPos(hwnd, defview, x, y, w, h, SWP_NOACTIVATE | SWP_SHOWWINDOW | SWP_FRAMECHANGED)
-    SetWindowPos(host, hwnd, 0, 0, 0, 0, SWP_NOACTIVATE | 0x0001 | 0x0002) if host.to_i != progman.to_i
+    SetWindowPos(host, hwnd, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE) if host.to_i != progman.to_i
     InvalidateRect(hwnd, nil, 1)
     UpdateWindow(hwnd)
 
     ex_now = GetWindowLongPtrW(hwnd, GWL_EXSTYLE)
-    File.open(log_path, 'a') { |f| f.puts "#{Time.now}: 配置完了（ex=0x#{ex_now.to_s(16)}）" } rescue nil
+    File.open(log_path, 'a') { |f| f.puts "#{Time.now}: 配置完了（ex=0x#{ex_now.to_s(16)}、#{progman_children_order(hwnd)}）" } rescue nil
     true
+  end
+
+  #Progmanの子の重なり順を、手前から並べた文字列にする（引数hwndは自ウィンドウ）
+  def progman_children_order(hwnd)
+    progman = FindWindowW(wide('Progman'), nil)
+    names = []
+    child = GetWindow(progman, 5)
+    while child && !child.null? && names.size < 20
+      names << (child.to_i == hwnd.to_i ? '自分' : class_name(child))
+      child = GetWindow(child, 2)
+    end
+    "手前から: #{names.join(' > ')}"
+  rescue StandardError
+    '重なり順: 読めない'
+  end
+
+  #自ウィンドウがアイコンのすぐ奥にあるか確かめ、崩れていたら並べ直す（引数hwndは自ウィンドウ、引数log_pathは記録の場所。並べ直したら真）
+  def keep_below_icons(hwnd, log_path)
+    progman = FindWindowW(wide('Progman'), nil)
+    return false if progman.nil? || progman.null?
+    defview = FindWindowExW(progman, nil, wide('SHELLDLL_DefView'), nil)
+    return false if defview.nil? || defview.null?
+    return false if GetWindow(defview, 2).to_i == hwnd.to_i
+
+    before = progman_children_order(hwnd)
+    SetWindowPos(hwnd, defview, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE)
+    workerw = FindWindowExW(progman, nil, wide('WorkerW'), nil)
+    SetWindowPos(workerw, hwnd, 0, 0, 0, 0, SWP_NOACTIVATE | SWP_NOMOVE | SWP_NOSIZE) if workerw && !workerw.null?
+    File.open(log_path, 'a') { |f| f.puts "#{Time.now}: 重なり順が崩れたので直した（前 #{before} → 後 #{progman_children_order(hwnd)}）" } rescue nil
+    true
+  rescue StandardError
+    false
   end
 
 
@@ -266,6 +349,36 @@ module Platform
     parts[1..].map { |name| File.join(dir, name) }
   rescue StandardError
     []
+  end
+
+  #色を選ぶ画面を開く（引数owner_hwndは親ウィンドウ、引数initial_rgbは初期色[R, G, B]。戻り値は選ばれた[R, G, B]、取り消しならnil）
+  def choose_color_dialog(owner_hwnd = nil, initial_rgb = [0, 0, 0])
+    return nil unless API_READY
+
+    cust_colors = Fiddle::Pointer.malloc(64)
+    cust_colors[0, 64] = "\xFF" * 64
+
+    init_colorref = (initial_rgb[0] & 0xFF) | ((initial_rgb[1] & 0xFF) << 8) | ((initial_rgb[2] & 0xFF) << 16)
+
+    struct = "\x00" * 72
+    struct[0, 4] = [72].pack('L<')
+    struct[8, 8] = [owner_hwnd.to_i].pack('Q<') if owner_hwnd
+    struct[24, 4] = [init_colorref].pack('L<')
+    struct[32, 8] = [cust_colors.to_i].pack('Q<')
+    struct[40, 4] = [0x00000001 | 0x00000002].pack('L<')
+
+    struct_ptr = Fiddle::Pointer.malloc(72)
+    struct_ptr[0, 72] = struct
+
+    return nil if ChooseColorW(struct_ptr) == 0
+
+    result_ref = struct_ptr[24, 4].unpack1('L<')
+    r = result_ref & 0xFF
+    g = (result_ref >> 8) & 0xFF
+    b = (result_ref >> 16) & 0xFF
+    [r, g, b]
+  rescue StandardError
+    nil
   end
 
   #スタートアップフォルダに置くショートカットの場所

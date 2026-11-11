@@ -18,28 +18,41 @@ module Loader
   #使う絵の一覧を作る（引数settingsは設定、引数paintings_dirは素材のフォルダ、引数data_dirはデータフォルダ。戻り値はidとpathとcropの組の配列）
   def paintings(settings, paintings_dir, data_dir)
     builtin_crops = settings['builtinCrop'] || {}
-    list = []
-    credits(paintings_dir).each do |c|
-      next unless settings['enabled'].include?(c['id'])
-      path = File.join(paintings_dir, c['file'])
-      crop = builtin_crops[c['id']] || c['crop'] || 'center'
-      crop = crop.to_sym if crop.is_a?(String)
-      list << { id: c['id'], path: path, crop: crop } if File.exist?(path)
-    end
+    hidden_builtins = settings['hiddenBuiltin'] || []
+    user_list = []
     settings['userImages'].each do |u|
       next unless settings['enabled'].include?(u['id'])
       path = File.join(data_dir, 'user-images', u['file'])
       crop = u['crop'] || 'center'
       crop = crop.to_sym if crop.is_a?(String)
-      list << { id: u['id'], path: path, crop: crop } if File.exist?(path)
+      user_list << { id: u['id'], path: path, crop: crop } if File.exist?(path)
     end
-    list
+    builtin_list = []
+    credits(paintings_dir).each do |c|
+      next if hidden_builtins.include?(c['id'])
+      next unless settings['enabled'].include?(c['id'])
+      path = File.join(paintings_dir, c['file'])
+      crop = builtin_crops[c['id']] || c['crop'] || 'center'
+      crop = crop.to_sym if crop.is_a?(String)
+      builtin_list << { id: c['id'], path: path, crop: crop } if File.exist?(path)
+    end
+    user_list + builtin_list
+  end
+
+  #切り取り指定からキャッシュ用の文字を作る（引数cropは切り取り指定）
+  def crop_key(crop)
+    return crop.to_s unless crop.is_a?(Hash)
+    x = crop[:x] || crop['x'] || 0
+    y = crop[:y] || crop['y'] || 0
+    w = crop[:w] || crop['w'] || 1
+    h = crop[:h] || crop['h'] || 1
+    sprintf('%.4f_%.4f_%.4f_%.4f', x.to_f, y.to_f, w.to_f, h.to_f)
   end
 
   #絵をドット絵データにする（引数paintingは絵の情報、引数colsとrowsはドットの数、引数cache_dirはキャッシュのフォルダ、引数decodeは画像を読む手続きで幅と高さと色の配列を返す。戻り値はパレットと番号の組、読めなければnil）
   def grid_for(painting, cols, rows, cache_dir, decode)
     mtime = File.mtime(painting[:path])
-    cache_id = painting[:crop].is_a?(Hash) ? "#{painting[:id]}_#{painting[:crop].hash.abs}" : painting[:id]
+    cache_id = "#{painting[:id]}_#{crop_key(painting[:crop])}"
     cached = DotCache.read(cache_dir, cache_id, mtime, cols, rows)
     return cached if cached
     w, h, pixels = decode.call(painting[:path])
