@@ -7,7 +7,7 @@ module Platform
   extend Fiddle::Importer
 
   begin
-    dlload 'user32.dll', 'kernel32.dll', 'comdlg32.dll', 'gdi32.dll'
+    dlload 'user32.dll', 'kernel32.dll', 'comdlg32.dll', 'gdi32.dll', 'shell32.dll'
     #ウィンドウ全般
     extern 'void* FindWindowW(void*, void*)'
     extern 'void* FindWindowExW(void*, void*, void*, void*)'
@@ -77,6 +77,15 @@ module Platform
     extern 'int GetOpenFileNameW(void*)'
     #色を選ぶ画面
     extern 'int ChooseColorW(void*)'
+    #タスクトレイ・メニュー
+    extern 'int Shell_NotifyIconW(unsigned int, void*)'
+    extern 'void* ExtractIconW(void*, void*, unsigned int)'
+    extern 'void* LoadIconW(void*, void*)'
+    extern 'void* CreatePopupMenu()'
+    extern 'int AppendMenuW(void*, unsigned int, uintptr_t, void*)'
+    extern 'int TrackPopupMenu(void*, unsigned int, int, int, int, void*, void*)'
+    extern 'int DestroyMenu(void*)'
+    extern 'int GetCursorPos(void*)'
     API_READY = true
   rescue StandardError
     API_READY = false
@@ -99,6 +108,17 @@ module Platform
   SRCCOPY = 0x00CC0020
   NULL_PEN = 8
   PS_SOLID = 0
+  NIM_ADD = 0x00000000
+  NIM_MODIFY = 0x00000001
+  NIM_DELETE = 0x00000002
+  NIF_MESSAGE = 0x00000001
+  NIF_ICON = 0x00000002
+  NIF_TIP = 0x00000004
+  WM_TRAYICON = 0x8001
+  MF_STRING = 0x00000000
+  MF_SEPARATOR = 0x00000800
+  TPM_RIGHTBUTTON = 0x0002
+  TPM_RETURNCMD = 0x0100
 
   module_function
 
@@ -379,6 +399,79 @@ module Platform
     [r, g, b]
   rescue StandardError
     nil
+  end
+
+  #アプリのアイコンハンドルを取得する（exeの埋め込みアイコン、無ければ標準アプリ枠）
+  def app_icon_handle
+    return Fiddle::Pointer.new(0) unless API_READY
+    exe = ENV['OCRAN_EXECUTABLE']
+    if exe && File.exist?(exe)
+      icon = ExtractIconW(GetModuleHandleW(nil), wide(exe), 0)
+      return icon if icon && !icon.null?
+    end
+    LoadIconW(nil, Fiddle::Pointer.new(32512))
+  rescue StandardError
+    Fiddle::Pointer.new(0)
+  end
+
+  #NOTIFYICONDATAW構造体のバイナリを作る（引数hwndはウィンドウ、引数tip_textは説明文字）
+  def notify_icon_struct(hwnd, tip_text = 'Pixel Wave')
+    sz = 976
+    buf = Fiddle::Pointer.malloc(sz)
+    buf[0, sz] = "\x00" * sz
+    buf[0, 4] = [sz].pack('L<')
+    buf[8, 8] = [hwnd.to_i].pack('Q<')
+    buf[16, 4] = [1].pack('L<')
+    buf[20, 4] = [NIF_MESSAGE | NIF_ICON | NIF_TIP].pack('L<')
+    buf[24, 4] = [WM_TRAYICON].pack('L<')
+    icon = app_icon_handle
+    buf[32, 8] = [icon.to_i].pack('Q<')
+    tip = wide(tip_text[0, 63])
+    buf[40, [tip.bytesize, 254].min] = tip[0, [tip.bytesize, 254].min]
+    buf
+  end
+
+  #タスクトレイにアイコンを追加する（引数hwndはウィンドウ、引数tip_textは説明文字）
+  def add_tray_icon(hwnd, tip_text = 'Pixel Wave')
+    return false unless API_READY
+    buf = notify_icon_struct(hwnd, tip_text)
+    Shell_NotifyIconW(NIM_ADD, buf) != 0
+  rescue StandardError
+    false
+  end
+
+  #タスクトレイからアイコンを削除する（引数hwndはウィンドウ）
+  def remove_tray_icon(hwnd)
+    return false unless API_READY
+    buf = notify_icon_struct(hwnd)
+    Shell_NotifyIconW(NIM_DELETE, buf) != 0
+  rescue StandardError
+    false
+  end
+
+  #タスクトレイの右クリックメニューを表示する（引数hwndはウィンドウ、引数pausedは一時停止中か。戻り値は選ばれた番号）
+  def show_tray_menu(hwnd, paused)
+    return 0 unless API_READY
+    menu = CreatePopupMenu()
+    return 0 if menu.nil? || menu.null?
+
+    pause_label = paused ? '壁紙を再開' : '壁紙を一時停止'
+    AppendMenuW(menu, MF_STRING, 101, wide('設定を開く'))
+    AppendMenuW(menu, MF_SEPARATOR, 0, nil)
+    AppendMenuW(menu, MF_STRING, 102, wide(pause_label))
+    AppendMenuW(menu, MF_SEPARATOR, 0, nil)
+    AppendMenuW(menu, MF_STRING, 103, wide('終了'))
+
+    point = Fiddle::Pointer.malloc(8)
+    GetCursorPos(point)
+    x, y = point[0, 8].unpack('l<2')
+
+    SetForegroundWindow(hwnd)
+    cmd = TrackPopupMenu(menu, TPM_RIGHTBUTTON | TPM_RETURNCMD, x, y, 0, hwnd, nil)
+    DestroyMenu(menu)
+    cmd
+  rescue StandardError
+    0
   end
 
   #スタートアップフォルダに置くショートカットの場所

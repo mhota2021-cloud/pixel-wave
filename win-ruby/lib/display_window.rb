@@ -48,6 +48,7 @@ class DisplayWindow < NativeWindow
       #ログイン時の起動やインストーラー版の外側のexeを経由しても止められるよう、描く本人の番号を記録する
       File.write(File.join(Platform.data_dir, 'wallpaper.pid'), Process.pid.to_s) rescue nil
       attach_wallpaper
+      Platform.add_tray_icon(@hwnd, 'Pixel Wave - 壁紙') if Platform::API_READY
     end
     @engine.request_full_redraw
     advance_frame
@@ -72,7 +73,11 @@ class DisplayWindow < NativeWindow
     when WM_TIMER
       wparam.to_i == TIMER_CHECK ? on_check : on_tick
       0
+    when Platform::WM_TRAYICON
+      on_tray_icon(wparam, lparam)
+      0
     when WM_DESTROY
+      Platform.remove_tray_icon(@hwnd) if @mode == :wallpaper && Platform::API_READY
       @buffer.dispose
       Platform.PostQuitMessage(0)
       0
@@ -86,6 +91,47 @@ class DisplayWindow < NativeWindow
   end
 
   private
+
+  #タスクトレイの操作（引数wparamはアイコンID、引数lparamはマウス操作メッセージ）
+  def on_tray_icon(wparam, lparam)
+    msg = lparam.to_i & 0xFFFF
+    case msg
+    when 0x0202, 0x0203
+      open_settings
+    when 0x0205, 0x007B
+      cmd = Platform.show_tray_menu(@hwnd, @paused)
+      case cmd
+      when 101
+        open_settings
+      when 102
+        @paused = !@paused
+        if !@paused
+          advance_frame
+          schedule_tick
+        end
+      when 103
+        close
+      end
+    end
+  end
+
+  #設定画面を開く（すでに開いていれば前面に出し、無ければ新しく起動する）
+  def open_settings
+    if Platform::API_READY && Platform.mutex_taken?('PixelWaveSettingsMutex')
+      hwnd = Platform.find_window('Pixel Wave')
+      Platform.bring_to_front(hwnd) if hwnd
+    else
+      cmd = if ENV['OCRAN_EXECUTABLE']
+              [ENV['OCRAN_EXECUTABLE']]
+            else
+              [RbConfig.ruby, File.expand_path('../main.rb', __dir__)]
+            end
+      pid = spawn(*cmd)
+      Process.detach(pid)
+    end
+  rescue StandardError => e
+    File.open(File.join(Platform.data_dir, 'wallpaper.log'), 'a') { |f| f.puts "#{Time.now}: 設定画面起動失敗（#{e.message}）" } rescue nil
+  end
 
   #壁紙として貼り付ける（失敗しても表示は続ける）
   def attach_wallpaper
