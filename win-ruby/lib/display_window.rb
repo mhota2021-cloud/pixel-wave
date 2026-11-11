@@ -6,6 +6,7 @@ require_relative 'loader'
 require_relative 'wic'
 require_relative 'platform'
 require_relative 'render_math'
+require_relative 'tray_window'
 
 class DisplayWindow < NativeWindow
   TIMER_TICK = 1
@@ -40,6 +41,7 @@ class DisplayWindow < NativeWindow
     @paused = false
     @mouse_origin = nil
     @pause_on_battery = pause_on_battery
+    @tray_window = nil
   end
 
   #表示を始める（壁紙の貼り付けは、ウィンドウを作ったこのスレッドで行う）
@@ -48,7 +50,7 @@ class DisplayWindow < NativeWindow
       #ログイン時の起動やインストーラー版の外側のexeを経由しても止められるよう、描く本人の番号を記録する
       File.write(File.join(Platform.data_dir, 'wallpaper.pid'), Process.pid.to_s) rescue nil
       attach_wallpaper
-      Platform.add_tray_icon(@hwnd, 'Pixel Wave - 壁紙') if Platform::API_READY
+      @tray_window = TrayWindow.new(self) if Platform::API_READY
     end
     @engine.request_full_redraw
     advance_frame
@@ -59,59 +61,25 @@ class DisplayWindow < NativeWindow
     run
   end
 
-  #メッセージの処理
-  def handle_message(hwnd, msg, wparam, lparam)
-    case msg
-    when WM_PAINT
-      paint_struct = Fiddle::Pointer.malloc(128)
-      hdc = Platform.BeginPaint(hwnd, paint_struct)
-      @buffer.blit_to(hdc)
-      Platform.EndPaint(hwnd, paint_struct)
-      0
-    when WM_ERASEBKGND
-      1
-    when WM_TIMER
-      wparam.to_i == TIMER_CHECK ? on_check : on_tick
-      0
-    when Platform::WM_TRAYICON
-      on_tray_icon(wparam, lparam)
-      0
-    when WM_DESTROY
-      Platform.remove_tray_icon(@hwnd) if @mode == :wallpaper && Platform::API_READY
-      @buffer.dispose
-      Platform.PostQuitMessage(0)
-      0
-    when WM_KEYDOWN, WM_LBUTTONDOWN
-      close if @mode == :screensaver
-      0
-    when WM_MOUSEMOVE
-      on_mouse_move(lparam) if @mode == :screensaver
-      0
-    end
+  #ウィンドウを閉じる
+  def close
+    @tray_window.close if @tray_window
+    super
   end
 
-  private
+  #一時停止中か
+  def paused?
+    @paused
+  end
 
-  #タスクトレイの操作（引数wparamはアイコンID、引数lparamはマウス操作メッセージ）
-  def on_tray_icon(wparam, lparam)
-    msg = lparam.to_i & 0xFFFF
-    case msg
-    when 0x0202, 0x0203
-      open_settings
-    when 0x0205, 0x007B
-      cmd = Platform.show_tray_menu(@hwnd, @paused)
-      case cmd
-      when 101
-        open_settings
-      when 102
-        @paused = !@paused
-        if !@paused
-          advance_frame
-          schedule_tick
-        end
-      when 103
-        close
-      end
+  #一時停止と再開を切り替える
+  def toggle_pause
+    @paused = !@paused
+    if !@paused
+      advance_frame
+      schedule_tick
+    else
+      kill_timer(TIMER_TICK)
     end
   end
 
@@ -132,6 +100,37 @@ class DisplayWindow < NativeWindow
   rescue StandardError => e
     File.open(File.join(Platform.data_dir, 'wallpaper.log'), 'a') { |f| f.puts "#{Time.now}: 設定画面起動失敗（#{e.message}）" } rescue nil
   end
+
+  #メッセージの処理
+  def handle_message(hwnd, msg, wparam, lparam)
+    case msg
+    when WM_PAINT
+      paint_struct = Fiddle::Pointer.malloc(128)
+      hdc = Platform.BeginPaint(hwnd, paint_struct)
+      @buffer.blit_to(hdc)
+      Platform.EndPaint(hwnd, paint_struct)
+      0
+    when WM_ERASEBKGND
+      1
+    when WM_TIMER
+      wparam.to_i == TIMER_CHECK ? on_check : on_tick
+      0
+    when WM_DESTROY
+      @tray_window.close if @tray_window
+      @buffer.dispose
+      Platform.PostQuitMessage(0)
+      0
+    when WM_KEYDOWN, WM_LBUTTONDOWN
+      close if @mode == :screensaver
+      0
+    when WM_MOUSEMOVE
+      on_mouse_move(lparam) if @mode == :screensaver
+      0
+    end
+  end
+
+  private
+
 
   #壁紙として貼り付ける（失敗しても表示は続ける）
   def attach_wallpaper

@@ -81,6 +81,7 @@ module Platform
     extern 'int Shell_NotifyIconW(unsigned int, void*)'
     extern 'void* ExtractIconW(void*, void*, unsigned int)'
     extern 'void* LoadIconW(void*, void*)'
+    extern 'void* LoadImageW(void*, void*, unsigned int, int, int, unsigned int)'
     extern 'void* CreatePopupMenu()'
     extern 'int AppendMenuW(void*, unsigned int, uintptr_t, void*)'
     extern 'int TrackPopupMenu(void*, unsigned int, int, int, int, void*, void*)'
@@ -119,6 +120,9 @@ module Platform
   MF_SEPARATOR = 0x00000800
   TPM_RIGHTBUTTON = 0x0002
   TPM_RETURNCMD = 0x0100
+  IMAGE_ICON = 1
+  LR_LOADFROMFILE = 0x00000010
+  LR_DEFAULTSIZE = 0x00000040
 
   module_function
 
@@ -401,13 +405,23 @@ module Platform
     nil
   end
 
-  #アプリのアイコンハンドルを取得する（exeの埋め込みアイコン、無ければ標準アプリ枠）
+  #アプリのアイコンハンドルを取得する（icoファイル、exe埋め込みアイコン、無ければ標準アプリ枠）
   def app_icon_handle
     return Fiddle::Pointer.new(0) unless API_READY
+    ico_candidates = [
+      File.expand_path('../../assets/icon.ico', __dir__),
+      File.expand_path('../assets/icon.ico', __dir__),
+      File.join(data_dir, 'icon.ico')
+    ]
+    ico_path = ico_candidates.find { |p| File.exist?(p) }
+    if ico_path
+      icon = LoadImageW(nil, wide(ico_path), IMAGE_ICON, 0, 0, LR_LOADFROMFILE | LR_DEFAULTSIZE)
+      return icon if icon && !icon.null?
+    end
     exe = ENV['OCRAN_EXECUTABLE']
     if exe && File.exist?(exe)
       icon = ExtractIconW(GetModuleHandleW(nil), wide(exe), 0)
-      return icon if icon && !icon.null?
+      return icon if icon && !icon.null? && icon.to_i > 1
     end
     LoadIconW(nil, Fiddle::Pointer.new(32512))
   rescue StandardError

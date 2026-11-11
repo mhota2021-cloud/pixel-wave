@@ -27,6 +27,7 @@ Push-Location $stage
 try {
     $env:BUNDLE_GEMFILE = Join-Path $root 'Gemfile'
     bundle exec ocran --output PixelWave.exe --add-all-core --windows --no-lzma --chdir-first `
+        --icon assets\icon.ico `
         --innosetup (Join-Path $root 'installer.iss') main.rb lib assets
     if ($LASTEXITCODE -ne 0) { throw "ocranが失敗しました（終了コード$LASTEXITCODE）" }
     $setup = Get-ChildItem -Recurse -Filter 'PixelWaveSetup.exe' | Select-Object -First 1
