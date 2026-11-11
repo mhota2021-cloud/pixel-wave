@@ -35,6 +35,10 @@ begin
     builtin_ids = Loader.credits(pdir).map { |c| c['id'] }
     settings = AppSettings.load(data_dir, builtin_ids)
     list = Loader.paintings(settings, pdir, data_dir)
+    if list.empty?
+      settings['enabled'] = builtin_ids
+      list = Loader.paintings(settings, pdir, data_dir)
+    end
     DisplayWindow.new(
       mode: mode,
       paintings: list,

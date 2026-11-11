@@ -35,6 +35,7 @@ module Platform
     extern 'int TranslateMessage(void*)'
     extern 'intptr_t DispatchMessageW(void*)'
     extern 'void PostQuitMessage(int)'
+    extern 'int PostMessageW(void*, unsigned int, uintptr_t, intptr_t)'
     extern 'int DestroyWindow(void*)'
     extern 'int UpdateWindow(void*)'
     extern 'uintptr_t SetTimer(void*, uintptr_t, unsigned int, void*)'
@@ -117,6 +118,9 @@ module Platform
   NIF_ICON = 0x00000002
   NIF_TIP = 0x00000004
   WM_TRAYICON = 0x8001
+  WM_USER_TOGGLE_WALLPAPER = 0x8002
+  WM_USER_HIDE_WALLPAPER   = 0x8003
+  WM_USER_SHOW_WALLPAPER   = 0x8004
   MF_STRING = 0x00000000
   MF_SEPARATOR = 0x00000800
   TPM_RIGHTBUTTON = 0x0002
@@ -216,7 +220,12 @@ module Platform
 
 #壁紙用の受け皿ウィンドウ（WorkerW）を探す（Lively Wallpaperの手法）
   def find_workerw
-    progman = FindWindowW(wide('Progman'), nil)
+    progman = nil
+    5.times do
+      progman = FindWindowW(wide('Progman'), nil)
+      break if progman && !progman.null?
+      sleep 0.1
+    end
     raise 'Progmanが見つかりません' if progman.nil? || progman.null?
 
     result = Fiddle::Pointer.malloc(8)
@@ -224,7 +233,12 @@ module Platform
     SendMessageTimeoutW(progman, 0x052C, 0xD, 1, 0, 1000, result)
 
     #方法1: Windows 11 24H2（Progmanの直接の子にWorkerWがいる構成）
-    workerw = FindWindowExW(progman, nil, wide('WorkerW'), nil)
+    workerw = nil
+    5.times do
+      workerw = FindWindowExW(progman, nil, wide('WorkerW'), nil)
+      break if workerw && !workerw.null?
+      sleep 0.05
+    end
     return workerw if workerw && !workerw.null?
 
     #方法2: Windows 10 / 11（SHELLDLL_DefViewを持つトップレベルウィンドウの次の兄弟WorkerW）
@@ -464,16 +478,22 @@ module Platform
     false
   end
 
-  #タスクトレイの右クリックメニューを表示する（引数hwndはウィンドウ、引数pausedは一時停止中か。戻り値は選ばれた番号）
-  def show_tray_menu(hwnd, paused)
+  #タスクトレイの右クリックメニューを表示する（引数hwndはウィンドウ、引数pausedは一時停止中か、引数hiddenは非表示中か。戻り値は選ばれた番号）
+  def show_tray_menu(hwnd, paused, hidden = false)
     return 0 unless API_READY
     menu = CreatePopupMenu()
     return 0 if menu.nil? || menu.null?
 
-    pause_label = paused ? '壁紙を再開' : '壁紙を一時停止'
+    wallpaper_label = if hidden
+                        '壁紙を表示'
+                      elsif paused
+                        '壁紙を再開'
+                      else
+                        '壁紙を一時停止'
+                      end
     AppendMenuW(menu, MF_STRING, 101, wide('設定を開く'))
     AppendMenuW(menu, MF_SEPARATOR, 0, nil)
-    AppendMenuW(menu, MF_STRING, 102, wide(pause_label))
+    AppendMenuW(menu, MF_STRING, 102, wide(wallpaper_label))
     AppendMenuW(menu, MF_SEPARATOR, 0, nil)
     AppendMenuW(menu, MF_STRING, 103, wide('終了'))
 

@@ -141,7 +141,8 @@ class SettingsWindow < NativeWindow
     @preview_rows = rows
     @dot_colors = {}
     @engine.request_full_redraw
-    apply_preview_changes(@engine.frame(@engine_time))
+    now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    apply_preview_changes(@engine.frame(now))
   end
 
   #一覧の項目を作る（追加した画像を先頭にし、非表示の内蔵素材は除く）
@@ -214,8 +215,8 @@ class SettingsWindow < NativeWindow
     @engine_time += dt
     anim_moving = update_switch_animations(dt)
     redraw_all if anim_moving
-    if @engine.needs_redraw?(@engine_time)
-      apply_preview_changes(@engine.frame(@engine_time))
+    if @engine.needs_redraw?(now)
+      apply_preview_changes(@engine.frame(now))
       set_timer(TIMER_TICK, 16)
     elsif anim_moving
       invalidate
@@ -699,9 +700,8 @@ def draw_button(rect, label, kind, hover)
       running = Platform.process_alive?(pid)
       File.delete(pid_path) unless running
     end
-    if @settings['wallpaper'] != running
-      @settings['wallpaper'] = running
-      AppSettings.save(@data_dir, @settings)
+    if @settings['wallpaper'] && !running
+      start_wallpaper
     end
   end
 
@@ -715,14 +715,20 @@ def draw_button(rect, label, kind, hover)
     persist
   end
 
-  #壁紙のプロセスを起動する
+  #壁紙を表示する（常駐プロセスがいれば再表示、いなければ起動する）
   #Windowsの壁紙は書き換えない（ドット絵のウィンドウが写真の手前を覆うため不要で、書き換えるとDefenderに怪しまれる）
   def start_wallpaper
-    command = self_command(['--wallpaper'])
-    err_log = File.join(@data_dir, 'wallpaper_error.log')
-    pid = spawn(*command, [:out, :err] => [err_log, 'a'])
-    Process.detach(pid)
-    File.write(File.join(@data_dir, 'wallpaper.pid'), pid.to_s)
+    tray_hwnd = Platform::API_READY ? Platform.FindWindowW(Platform.wide('PixelWaveTrayHelper'), nil) : nil
+    if tray_hwnd && !tray_hwnd.null?
+      Platform.PostMessageW(tray_hwnd, Platform::WM_USER_SHOW_WALLPAPER, 0, 0)
+    else
+      command = self_command(['--wallpaper'])
+      err_log = File.join(@data_dir, 'wallpaper_error.log')
+      app_root = File.expand_path('..', __dir__)
+      pid = spawn(*command, chdir: app_root, [:out, :err] => [err_log, 'a'])
+      Process.detach(pid)
+      File.write(File.join(@data_dir, 'wallpaper.pid'), pid.to_s)
+    end
     @settings['wallpaper'] = true
     apply_autostart
   end
@@ -737,13 +743,11 @@ def draw_button(rect, label, kind, hover)
     end
   end
 
-  #壁紙のプロセスを止める
+  #壁紙を非表示にする（プロセスとトレイ常駐は維持する）
   def stop_wallpaper
-    pid_path = File.join(@data_dir, 'wallpaper.pid')
-    if File.exist?(pid_path)
-      pid = File.read(pid_path).strip.to_i
-      Platform.kill_process(pid) if pid > 0 && Platform::API_READY
-      File.delete(pid_path) rescue nil
+    tray_hwnd = Platform::API_READY ? Platform.FindWindowW(Platform.wide('PixelWaveTrayHelper'), nil) : nil
+    if tray_hwnd && !tray_hwnd.null?
+      Platform.PostMessageW(tray_hwnd, Platform::WM_USER_HIDE_WALLPAPER, 0, 0)
     end
     @settings['wallpaper'] = false
     apply_autostart
@@ -772,7 +776,7 @@ def draw_button(rect, label, kind, hover)
     if ENV['OCRAN_EXECUTABLE']
       [ENV['OCRAN_EXECUTABLE'], *extra]
     else
-      [RbConfig.ruby, File.expand_path('../main.rb', __dir__), *extra]
+      [RbConfig.ruby, '-Ilib', File.expand_path('../main.rb', __dir__), *extra]
     end
   end
 end

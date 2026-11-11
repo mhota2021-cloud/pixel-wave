@@ -27,6 +27,15 @@ class TrayWindow < NativeWindow
     when Platform::WM_TRAYICON
       on_tray_icon(wparam, lparam)
       0
+    when Platform::WM_USER_TOGGLE_WALLPAPER
+      @display_window.toggle_wallpaper_visibility
+      0
+    when Platform::WM_USER_HIDE_WALLPAPER
+      @display_window.hide_wallpaper
+      0
+    when Platform::WM_USER_SHOW_WALLPAPER
+      @display_window.show_wallpaper
+      0
     when WM_DESTROY
       Platform.remove_tray_icon(@hwnd) if Platform::API_READY
       0
@@ -42,12 +51,16 @@ class TrayWindow < NativeWindow
     when 0x0202, 0x0203
       @display_window.open_settings
     when 0x0205, 0x007B
-      cmd = Platform.show_tray_menu(@hwnd, @display_window.paused?)
+      cmd = Platform.show_tray_menu(@hwnd, @display_window.paused?, @display_window.wallpaper_hidden?)
       case cmd
       when 101
         @display_window.open_settings
       when 102
-        @display_window.toggle_pause
+        if @display_window.wallpaper_hidden?
+          @display_window.show_wallpaper
+        else
+          @display_window.toggle_pause
+        end
       when 103
         @display_window.close
       end

@@ -1,9 +1,10 @@
-﻿#アニメーションの状態機械（描画から切り離した純粋な部分。値はTypeScript版のエンジンに合わせる）
+#アニメーションの状態機械（描画から切り離した純粋な部分。値はTypeScript版のエンジンに合わせる）
 require_relative 'dotart'
 
 class WaveEngine
   DISPLAY_SECONDS = 14.0
   TRANSITION_SECONDS = 10.0
+  CYCLE_SECONDS = DISPLAY_SECONDS + TRANSITION_SECONDS # 24.0秒
   DOT = 12
   FILL = 10
   BAND_DOTS = 1.5
@@ -20,18 +21,13 @@ class WaveEngine
     @dot = dot
     @fill = fill
     @rng = rng
-    @order = DotArt.shuffled_order(grids.length, rng)
-    @pos = 0
-    @phase = :show
-    @phase_started = nil
-    @from = @order[0] || 0
-    @target = @from
+    count = cols * rows
+    @shown = Array.new(count) { [-1, false] }
+    @pending_full_redraw = true
+    @last_cycle = nil
     @center = nil
     @max_dist = 1.0
     @distances = nil
-    count = cols * rows
-    @shown = Array.new(count) { [@from, false] }
-    @pending = grids.empty? ? nil : all_changes
   end
 
   #ドットの数を返す
@@ -39,69 +35,92 @@ class WaveEngine
     @cols * @rows
   end
 
-  #時刻で状態を進める（引数nowは秒。戻り値は変わったドットの配列で、要素は列と行と色）
+  #時刻で状態を進める（引数nowは秒。絶対時刻でも相対時刻でも決定論的に全プロセスで同期する）
   def frame(now)
     return [] if @grids.empty?
-    @phase_started = now if @phase_started.nil?
-    if @phase == :show
-      if @grids.length > 1 && now - @phase_started >= DISPLAY_SECONDS
-        start_transition(now)
-        transition_frame(now)
-      else
-        initial = @pending
-        @pending = nil
-        initial || []
+
+    #絵が1枚のときは常にその絵を表示
+    if @grids.length == 1
+      changes = []
+      dot_count.times do |i|
+        update_dot(changes, i, 0, false)
+      end
+      @pending_full_redraw = false
+      return changes
+    end
+
+    cycle = (now / CYCLE_SECONDS).floor
+    cycle_time = now - (cycle * CYCLE_SECONDS)
+
+    #サイクルが変わったら波の中心点を計算（サイクル番号で全インスタンスで同じ位置から波が出る）
+    if @last_cycle != cycle
+      @last_cycle = cycle
+      setup_cycle(cycle)
+    end
+
+    from_idx = cycle % @grids.length
+    to_idx = (cycle + 1) % @grids.length
+    changes = []
+
+    if cycle_time < DISPLAY_SECONDS
+      #静止表示フェーズ（fromの絵を表示）
+      dot_count.times do |i|
+        update_dot(changes, i, from_idx, false)
       end
     else
-      transition_frame(now)
+      #波切り替えフェーズ（fromからtoへ波が広がる）
+      t = (cycle_time - DISPLAY_SECONDS) / TRANSITION_SECONDS
+      t = [[t, 0.0].max, 1.0].min
+      radius = DotArt.ease_in_out(t) * @max_dist
+      band = BAND_DOTS * @dot
+      dot_count.times do |i|
+        d = @distances[i]
+        painting = d <= radius ? to_idx : from_idx
+        glow = DotArt.in_wave_front?(d, radius, band)
+        update_dot(changes, i, painting, glow)
+      end
     end
+
+    @pending_full_redraw = false
+    changes
   end
 
   #描き直しが必要か返す（引数nowは秒。表示だけの間は偽になる）
   def needs_redraw?(now)
     return false if @grids.empty?
-    return true if @phase_started.nil?
-    return true if @phase == :transition
-    return true if !@pending.nil?
-    @grids.length > 1 && now - @phase_started >= DISPLAY_SECONDS
+    return true if @pending_full_redraw
+    return false if @grids.length <= 1
+
+    cycle = (now / CYCLE_SECONDS).floor
+    cycle_time = now - (cycle * CYCLE_SECONDS)
+
+    cycle_time >= DISPLAY_SECONDS || @last_cycle != cycle
   end
 
   #最初の描画のために全ドットを対象にする
   def request_full_redraw
-    return if @grids.empty?
-    @pending = all_changes
+    @pending_full_redraw = true
+    @shown.map! { [-1, false] }
   end
 
   private
 
-  #今の表示状態で全ドットの変更一覧を作る
-  def all_changes
-    changes = []
-    dot_count.times do |i|
-      painting, glow = @shown[i]
-      changes << [i % @cols, i / @cols, color_for(painting, i, glow)]
+  #サイクルの波の中心点と距離マップを計算する（サイクル番号で決定論的に生成）
+  def setup_cycle(cycle)
+    w = @cols * @dot.to_f
+    h = @rows * @dot.to_f
+    rng = Random.new(cycle)
+    perimeter = 2.0 * (w + h)
+    t = rng.rand * perimeter
+    if t < w
+      @center = [t, 0.0]
+    elsif t < w + h
+      @center = [w, t - w]
+    elsif t < 2.0 * w + h
+      @center = [t - w - h, h]
+    else
+      @center = [0.0, t - 2.0 * w - h]
     end
-    changes
-  end
-
-  #ドットの色を返す（引数paintingは絵の番号、引数iはドットの位置、引数glowは光らせるかどうか）
-  def color_for(painting, i, glow)
-    grid = @grids[painting]
-    rgb = grid[:palette][grid[:indices][i]]
-    glow ? DotArt.blend_toward_white(rgb, GLOW_RATIO) : rgb
-  end
-
-  #切り替えを始める（引数nowは秒）
-  def start_transition(now)
-    @phase = :transition
-    @phase_started = now
-    @from = @order[@pos]
-    @pos = (@pos + 1) % @order.length
-    @order = DotArt.shuffled_order(@grids.length, @rng, @from) if @pos == 0
-    @target = @order[@pos]
-    w = @cols * @dot
-    h = @rows * @dot
-    @center = DotArt.pick_perimeter_point(w, h, @rng)
     @max_dist = DotArt.farthest_corner_distance(@center[0], @center[1], w, h)
     @distances = Array.new(dot_count) do |i|
       cx = (i % @cols) * @dot + @dot / 2.0
@@ -110,27 +129,11 @@ class WaveEngine
     end
   end
 
-  #切り替え中の1フレーム（引数nowは秒。戻り値は変わったドットの配列）
-  def transition_frame(now)
-    t = (now - @phase_started) / TRANSITION_SECONDS
-    changes = []
-    if t >= 1.0
-      dot_count.times do |i|
-        update_dot(changes, i, @target, false)
-      end
-      @phase = :show
-      @phase_started = now
-      return changes
-    end
-    radius = DotArt.ease_in_out(t) * @max_dist
-    band = BAND_DOTS * @dot
-    dot_count.times do |i|
-      d = @distances[i]
-      painting = d <= radius ? @target : @from
-      glow = DotArt.in_wave_front?(d, radius, band)
-      update_dot(changes, i, painting, glow)
-    end
-    changes
+  #ドットの色を返す（引数paintingは絵の番号、引数iはドットの位置、引数glowは光らせるかどうか）
+  def color_for(painting, i, glow)
+    grid = @grids[painting]
+    rgb = grid[:palette][grid[:indices][i]]
+    glow ? DotArt.blend_toward_white(rgb, GLOW_RATIO) : rgb
   end
 
   #ドットの状態を更新し、変わったら一覧に足す（引数changesは一覧、引数iはドットの位置、引数paintingは絵の番号、引数glowは光らせるかどうか）

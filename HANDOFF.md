@@ -192,3 +192,51 @@ Museの報告は、そのまま信じない。これまでに次の食い違い�
 - **検証**:
   - 全単体テスト43件通過。
   - 最新インストーラー `Output/PixelWaveSetup.exe` のビルド完了。Windows Defenderクイックスキャンで脅威ゼロ確認。
+
+
+#### 10. 設定画面からの壁紙トグル（OFF→ON）時の再起動・アタッチ安定化（2026-11-11）
+- **原因究明**:
+  - トレイやコマンドで起動した壁紙を設定画面からOFF→ONした際、画面が真っ黒のまま絵に切り替わらない現象が発生。
+  - 主因は3点:
+    1. 設定画面やトレイからの起動コマンド（`self_command`・`open_settings`）で、開発実行時の `-Ilib` オプションおよび作業ディレクトリ（`chdir: app_root`）が渡されておらず、環境により相対パス探索やライブラリ参照が乱れていた。
+    2. 壁紙停止時に `Platform.kill_process` 直後に新プロセスを立ち上げると、Explorer側のWorkerWやウィンドウ解放が完了しておらず、新プロセスの `attach_wallpaper`（Progmanへのアタッチ）が一時的に拒否・失敗していた。
+    3. `main.rb` で設定や素材の不整合により絵リストが空になった場合のエラー回避と安全フォールバックが不足していた。
+- **対策**:
+  - `SettingsWindow#self_command` および `DisplayWindow#open_settings` に `-Ilib` オプションと明示的な作業ディレクトリ（`chdir: app_root`）を追加。
+  - `SettingsWindow#stop_wallpaper` で前プロセス強制終了後に最大0.5秒のプロセス終了待機ループを導入し、完全終了後に新プロセスを安全に起動。
+  - `Platform.find_workerw` でProgmanおよびWorkerWの探索に最大5回（0.05〜0.1秒間隔）のリトライ処理を組み込み、Explorer応答待ちの安定性を確保。
+  - `main.rb` で素材リストが空配列になった場合、自動的に全内蔵絵（`builtin_ids`）を再有効化する安全フォールバックを実装。
+- **検証**:
+  - 全単体テスト43件通過（`ruby -Ilib -e "Dir.glob('test/test_*.rb').each { |f| load f }"`）。
+  - 最新インストーラー `Output/PixelWaveSetup.exe` のビルド完了。Windows Defenderクイックスキャンで脅威ゼロ確認。
+
+
+#### 11. タスクボックス（通知領域）完全常駐化とプロセス間メッセージ制御（2026-11-11）
+- **設計改善**:
+  - 壁紙をOFFにしてもトレイアイコンが消えず、タスクボックス内に常に常駐していつでも設定画面や壁紙を呼び出せるように改修。
+  - 壁紙のOFF/ONでプロセスを都度kill/spawnする方式を廃止し、常駐プロセス（`DisplayWindow` + `TrayWindow`）を生かしたまま、壁紙ウィンドウの非表示（`SW_HIDE`）・表示（`SW_SHOW`）と描画タイマーの停止・再開で切り替える方式へ刷新。
+- **実装内容**:
+  - `Platform` にプライベートWindowsメッセージ（`WM_USER_TOGGLE_WALLPAPER = 0x8002`、`WM_USER_HIDE_WALLPAPER = 0x8003`、`WM_USER_SHOW_WALLPAPER = 0x8004`）および `PostMessageW` を新設。
+  - `TrayWindow` にメッセージ受信ハンドラを追加し、外部の設定画面（`SettingsWindow`）から送られた非表示・表示メッセージに応じて壁紙の可視性とタイマーを即座に制御。
+  - `SettingsWindow#stop_wallpaper` ではプロセスを殺さず `WM_USER_HIDE_WALLPAPER` を送信して壁紙のみ非表示化し、トレイアイコン常駐を維持。
+  - `SettingsWindow#start_wallpaper` では常駐プロセスのトレイウィンドウを探索し、存在すれば `WM_USER_SHOW_WALLPAPER` で即座に再表示。常駐プロセスがいなければ起動。
+  - トレイ右クリックメニュー（`show_tray_menu`）に非表示状態を反映し、壁紙非表示中は「壁紙を表示」を選択して直接再開できるようにした。
+- **検証**:
+  - 全単体テスト43件通過。
+  - 最新インストーラー `Output/PixelWaveSetup.exe` のビルド完了。Windows Defenderクイックスキャンで脅威ゼロ確認。
+
+
+#### 12. 壁紙と設定画面プレビューの完全同期（決定論的絶対時刻モデル）（2026-11-11）
+- **原因究明**:
+  - デスクトップの壁紙と設定画面内のプレビューで、流れている絵や波の発生位置・タイミングがバラバラだった。
+  - 主因は2点:
+    1. 各インスタンスが独自の `Random.new` を使っていたため、絵の再生順序や波の中心点が不一致だった。
+    2. 各インスタンスが起動時に `@engine_time = 0.0` から相対時間を累積していたため、起動タイミングの違いで表示サイクルがズレていた。
+- **対策**:
+  - `WaveEngine` を純粋関数的な絶対時刻決定論モデルへ刷新。
+  - OS共通の単調増加時計（`Process.clock_gettime(Process::CLOCK_MONOTONIC)`）を直接 `frame(now)` および `needs_redraw?(now)` に渡し、時間経過を完全一致化。
+  - 1サイクル（24.0秒 = 表示14.0秒 + 波10.0秒）のインデックス `cycle` を時間から一意に計算し、表示絵（`cycle % N`）と次絵（`(cycle + 1) % N`）を全インスタンスで完全同期。
+  - 波の発生位置（中心点）も `Random.new(cycle)` で決定論的に生成し、壁紙とプレビューで全く同じ位置・同じ速度で波が広がるよう同期。
+- **検証**:
+  - 統合同期テスト `win-ruby/test/test_sync.rb` を新設し、全単体テスト44件通過。
+  - 最新インストーラー `Output/PixelWaveSetup.exe` のビルド完了。Windows Defenderクイックスキャンで脅威ゼロ確認。

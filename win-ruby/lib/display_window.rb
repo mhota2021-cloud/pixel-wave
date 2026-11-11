@@ -42,6 +42,7 @@ class DisplayWindow < NativeWindow
     @mouse_origin = nil
     @pause_on_battery = pause_on_battery
     @tray_window = nil
+    @wallpaper_hidden = false
   end
 
   #表示を始める（壁紙の貼り付けは、ウィンドウを作ったこのスレッドで行う）
@@ -67,6 +68,37 @@ class DisplayWindow < NativeWindow
     super
   end
 
+  #壁紙が非表示中か
+  def wallpaper_hidden?
+    @wallpaper_hidden
+  end
+
+  #壁紙を非表示にして描画タイマーを止める（トレイアイコンは残す）
+  def hide_wallpaper
+    return unless @mode == :wallpaper
+    @wallpaper_hidden = true
+    kill_timer(TIMER_TICK)
+    Platform.ShowWindow(@hwnd, 0) if Platform::API_READY
+  end
+
+  #壁紙を再表示して描画タイマーを再開する
+  def show_wallpaper
+    return unless @mode == :wallpaper
+    @wallpaper_hidden = false
+    Platform.ShowWindow(@hwnd, 5) if Platform::API_READY
+    Platform.keep_below_icons(@hwnd, File.join(Platform.data_dir, 'wallpaper.log')) if Platform::API_READY
+    @last_tick_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    advance_frame
+    invalidate(nil)
+    Platform.UpdateWindow(@hwnd) if Platform::API_READY
+    schedule_tick
+  end
+
+  #壁紙の表示と非表示を切り替える
+  def toggle_wallpaper_visibility
+    @wallpaper_hidden ? show_wallpaper : hide_wallpaper
+  end
+
   #一時停止中か
   def paused?
     @paused
@@ -89,12 +121,13 @@ class DisplayWindow < NativeWindow
       hwnd = Platform.find_window('Pixel Wave')
       Platform.bring_to_front(hwnd) if hwnd
     else
+      app_root = File.expand_path('..', __dir__)
       cmd = if ENV['OCRAN_EXECUTABLE']
               [ENV['OCRAN_EXECUTABLE']]
             else
-              [RbConfig.ruby, File.expand_path('../main.rb', __dir__)]
+              [RbConfig.ruby, '-Ilib', File.expand_path('../main.rb', __dir__)]
             end
-      pid = spawn(*cmd)
+      pid = spawn(*cmd, chdir: app_root)
       Process.detach(pid)
     end
   rescue StandardError => e
@@ -142,7 +175,8 @@ class DisplayWindow < NativeWindow
 
   #時間を進めて、変わったドットだけ裏画面に塗る
   def advance_frame
-    changes = @engine.frame(@engine_time)
+    now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+    changes = @engine.frame(now)
     return if changes.empty?
     changes.each do |col, row, rgb|
       @buffer.fill(RenderMath.dot_rect(col, row, WaveEngine::DOT, WaveEngine::FILL), rgb)
@@ -155,20 +189,19 @@ class DisplayWindow < NativeWindow
   def schedule_tick
     if @paused
       kill_timer(TIMER_TICK)
-    elsif @engine.needs_redraw?(@engine_time)
-      set_timer(TIMER_TICK, 16)
     else
-      set_timer(TIMER_TICK, 250)
+      now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      if @engine.needs_redraw?(now)
+        set_timer(TIMER_TICK, 16)
+      else
+        set_timer(TIMER_TICK, 250)
+      end
     end
   end
 
   #タイマー（時間を進める）
   def on_tick
-    now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-    dt = now - @last_tick_at
-    @last_tick_at = now
     return if @paused
-    @engine_time += dt
     advance_frame
     schedule_tick
   end
@@ -176,6 +209,7 @@ class DisplayWindow < NativeWindow
   #タイマー（アイコン奥への重なり順の維持、2秒ごと）
   def on_check
     return unless Platform::API_READY
+    return if @wallpaper_hidden
     Platform.keep_below_icons(@hwnd, File.join(Platform.data_dir, 'wallpaper.log')) if @mode == :wallpaper
   end
 
