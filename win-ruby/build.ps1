@@ -1,4 +1,4 @@
-#Pixel Waveのインストーラー（Output\PixelWaveSetup.exe）を作る
+﻿#Pixel Waveのインストーラー（Output\PixelWaveSetup.exe）を作る
 #ocranの--innosetupでRuby本体と素材をまとめ、Inno Setupでインストーラーにする
 #1つのexeに詰める形は、起動のたびに%TEMP%へ展開して実行するため、Defenderに消された（2026-11-10）
 $ErrorActionPreference = 'Stop'
@@ -25,7 +25,8 @@ Copy-Item -Recurse (Join-Path (Split-Path $root) 'assets') $stage
 
 Push-Location $stage
 try {
-    ocran --output PixelWave.exe --add-all-core --windows --no-lzma --chdir-first `
+    $env:BUNDLE_GEMFILE = Join-Path $root 'Gemfile'
+    bundle exec ocran --output PixelWave.exe --add-all-core --windows --no-lzma --chdir-first `
         --innosetup (Join-Path $root 'installer.iss') main.rb lib assets
     if ($LASTEXITCODE -ne 0) { throw "ocranが失敗しました（終了コード$LASTEXITCODE）" }
     $setup = Get-ChildItem -Recurse -Filter 'PixelWaveSetup.exe' | Select-Object -First 1
