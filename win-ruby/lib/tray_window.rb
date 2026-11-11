@@ -15,7 +15,7 @@ class TrayWindow < NativeWindow
       height: 0,
       x: 0,
       y: 0,
-      ex_style: 0,
+      ex_style: Platform::WS_EX_TOOLWINDOW,
       style: Platform::WS_POPUP
     )
     Platform.add_tray_icon(@hwnd, 'Pixel Wave - 壁紙') if Platform::API_READY

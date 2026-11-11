@@ -173,20 +173,10 @@ class DisplayWindow < NativeWindow
     schedule_tick
   end
 
-  #タイマー（電池と全画面の判定、2秒ごと）
+  #タイマー（アイコン奥への重なり順の維持、2秒ごと）
   def on_check
-    @last_tick_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     return unless Platform::API_READY
     Platform.keep_below_icons(@hwnd, File.join(Platform.data_dir, 'wallpaper.log')) if @mode == :wallpaper
-    was_paused = @paused
-    battery_paused = @pause_on_battery && Platform.battery_powered?
-    @paused = Platform.foreground_fullscreen?(@hwnd) || battery_paused
-    if was_paused && !@paused
-      advance_frame
-      schedule_tick
-    elsif @paused
-      kill_timer(TIMER_TICK)
-    end
   end
 
 
