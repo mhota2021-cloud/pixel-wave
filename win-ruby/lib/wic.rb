@@ -136,7 +136,6 @@ module Wic
     end
   end
 
-
   #縮小画像をBGRAのバイト列で返す（引数pathはファイルの場所、引数max_wとmax_hは収める大きさで、縦横比は保つ。StretchDIBitsで描く用）
   def decode_thumb_bgra(path, max_w, max_h)
     fac = factory
@@ -171,6 +170,92 @@ module Wic
     ensure
       release(converter)
       release(scaler)
+      release(frame)
+      release(fac)
+    end
+  end
+
+  #切り抜き＆リサイズした画像をBGRAのバイト列で返す（引数pathはファイルの場所、引数target_wとtarget_hは出力サイズ、引数cropは切り取り範囲）
+  def decode_cropped_bgra(path, target_w, target_h, crop = nil)
+    fac = factory
+    frame = nil
+    clipper = nil
+    scaler = nil
+    converter = nil
+    begin
+      frame = first_frame(fac, path)
+      w_buf = Fiddle::Pointer.malloc(4)
+      h_buf = Fiddle::Pointer.malloc(4)
+      invoke(frame, 3, [Fiddle::Types::VOIDP, Fiddle::Types::VOIDP], Fiddle::Types::INT, w_buf, h_buf)
+      src_w = w_buf[0, 4].unpack1('L<')
+      src_h = h_buf[0, 4].unpack1('L<')
+
+      # 切り取り範囲の決定
+      if crop.is_a?(Hash)
+        rx = (crop[:x] || crop['x'] || 0.0).to_f
+        ry = (crop[:y] || crop['y'] || 0.0).to_f
+        rw = (crop[:w] || crop['w'] || 1.0).to_f
+        rh = (crop[:h] || crop['h'] || 1.0).to_f
+        cx = (src_w * rx).round
+        cy = (src_h * ry).round
+        cw = (src_w * rw).round
+        ch = (src_h * rh).round
+      else
+        # 中央クロップ（cover）
+        target_aspect = target_w.to_f / target_h
+        src_aspect = src_w.to_f / src_h
+        if src_aspect > target_aspect
+          ch = src_h
+          cw = [(src_h * target_aspect).round, 1].max
+          cx = (src_w - cw) / 2
+          cy = 0
+        else
+          cw = src_w
+          ch = [(src_w / target_aspect).round, 1].max
+          cx = 0
+          cy = (src_h - ch) / 2
+        end
+      end
+
+      # 範囲クランプ
+      cx = [[cx, 0].max, src_w - 1].min
+      cy = [[cy, 0].max, src_h - 1].min
+      cw = [[cw, 1].max, src_w - cx].min
+      ch = [[ch, 1].max, src_h - cy].min
+
+      # Clipper作成
+      out_clip = Fiddle::Pointer.malloc(8)
+      invoke(fac, 12, [Fiddle::Types::VOIDP], Fiddle::Types::INT, out_clip)
+      clipper = out_clip[0, 8].unpack1('Q')
+      rect_buf = [cx, cy, cw, ch].pack('l<4')
+      rect_ptr = Fiddle::Pointer.malloc(16)
+      rect_ptr[0, 16] = rect_buf
+      invoke(clipper, 8, [Fiddle::Types::VOIDP, Fiddle::Types::VOIDP], Fiddle::Types::INT, frame, rect_ptr)
+
+      # Scaler作成
+      out_scale = Fiddle::Pointer.malloc(8)
+      invoke(fac, 11, [Fiddle::Types::VOIDP], Fiddle::Types::INT, out_scale)
+      scaler = out_scale[0, 8].unpack1('Q')
+      invoke(scaler, 8, [Fiddle::Types::VOIDP, Fiddle::Types::UINT, Fiddle::Types::UINT, Fiddle::Types::INT], Fiddle::Types::INT,
+             clipper, target_w, target_h, 3)
+
+      # 32bpp RGBA変換
+      converter = convert_to_rgba(fac, scaler)
+      w, h, bytes = pixels_from(converter)
+
+      # RGBA -> BGRA変換
+      bgra = bytes.dup
+      (w * h).times do |i|
+        o = i * 4
+        tmp = bgra.getbyte(o)
+        bgra.setbyte(o, bgra.getbyte(o + 2))
+        bgra.setbyte(o + 2, tmp)
+      end
+      [w, h, bgra]
+    ensure
+      release(converter)
+      release(scaler)
+      release(clipper)
       release(frame)
       release(fac)
     end

@@ -38,4 +38,24 @@ class TestSettingsLayout < Minitest::Test
     assert_equal 0, SettingsLayout.max_scroll(rects, 8)
     assert SettingsLayout.max_scroll(rects, 40) > 0
   end
+
+  #モニター比率のプレビュー画面矩形の計算テスト
+  def test_preview_screen_rect
+    preview = [16, 16, 848, 256]
+    sx, sy, sw, sh = SettingsLayout.preview_screen_rect(preview, 16.0 / 9.0)
+    assert_equal 240, sh
+    assert_equal 428, sw
+    assert sw.even? && sh.even?, '幅と高さが偶数であること'
+    assert sx >= 16 && sx + sw <= 16 + 848, 'プレビュー枠内に収まること'
+    assert sy >= 16 && sy + sh <= 16 + 256, 'プレビュー枠内に収まること'
+
+    rects, _ = SettingsLayout.layout(880, 760, 8, 0)
+    assert rects.key?(:preview_screen)
+    assert rects.key?(:preview_bezel)
+    bx, by, bw, bh = rects[:preview_bezel]
+    assert_equal sx - 4, bx
+    assert_equal sy - 4, by
+    assert_equal sw + 8, bw
+    assert_equal sh + 8, bh
+  end
 end

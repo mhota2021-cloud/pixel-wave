@@ -14,7 +14,8 @@ module AppSettings
       'pauseOnBattery' => true,
       'autostart' => true,
       'builtinCrop' => {},
-      'hiddenBuiltin' => []
+      'hiddenBuiltin' => [],
+      'mode' => 'dotart'
     }
   end
 
@@ -32,7 +33,8 @@ module AppSettings
         'pauseOnBattery' => data.key?('pauseOnBattery') ? (data['pauseOnBattery'] ? true : false) : true,
         'autostart' => data.key?('autostart') ? (data['autostart'] ? true : false) : true,
         'builtinCrop' => data['builtinCrop'].is_a?(Hash) ? data['builtinCrop'] : {},
-        'hiddenBuiltin' => data['hiddenBuiltin'].is_a?(Array) ? data['hiddenBuiltin'] : []
+        'hiddenBuiltin' => data['hiddenBuiltin'].is_a?(Array) ? data['hiddenBuiltin'] : [],
+        'mode' => data['mode'] == 'normal' ? 'normal' : 'dotart'
       }
     rescue StandardError
       begin

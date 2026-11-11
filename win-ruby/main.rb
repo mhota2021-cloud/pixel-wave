@@ -1,4 +1,4 @@
-﻿#Pixel Wave（Windows版、Ruby）の入口。引数で動きを変える
+#Pixel Wave（Windows版、Ruby）の入口。引数で動きを変える
 require_relative 'lib/args'
 require_relative 'lib/settings'
 require_relative 'lib/loader'
@@ -43,7 +43,8 @@ begin
       mode: mode,
       paintings: list,
       cache_dir: Platform.cache_dir,
-      pause_on_battery: mode == :wallpaper && (settings['pauseOnBattery'] != false)
+      pause_on_battery: mode == :wallpaper && (settings['pauseOnBattery'] != false),
+      render_mode: (settings['mode'] == 'normal' ? :normal : :dotart)
     ).start
   else
     #設定画面は1つだけにする（名前付きミューテックスで気づき、開いていれば前に出して終わる）

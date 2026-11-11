@@ -60,8 +60,11 @@ module Platform
     extern 'unsigned int SetTextColor(void*, unsigned int)'
     extern 'int SetBkMode(void*, int)'
     extern 'void* CreateRectRgn(int, int, int, int)'
+    extern 'void* CreateEllipticRgn(int, int, int, int)'
     extern 'int SelectClipRgn(void*, void*)'
+    extern 'int CombineRgn(void*, void*, void*, int)'
     extern 'int GetTextExtentPoint32W(void*, void*, int, void*)'
+    extern 'int GetDIBits(void*, void*, unsigned int, unsigned int, void*, void*, unsigned int)'
     extern 'int StretchDIBits(void*, int, int, int, int, int, int, int, int, void*, void*, unsigned int, unsigned int)'
     extern 'void* GetStockObject(int)'
     extern 'int RoundRect(void*, int, int, int, int, int, int)'
@@ -121,6 +124,7 @@ module Platform
   WM_USER_TOGGLE_WALLPAPER = 0x8002
   WM_USER_HIDE_WALLPAPER   = 0x8003
   WM_USER_SHOW_WALLPAPER   = 0x8004
+  WM_USER_SET_MODE         = 0x8005
   MF_STRING = 0x00000000
   MF_SEPARATOR = 0x00000800
   TPM_RIGHTBUTTON = 0x0002

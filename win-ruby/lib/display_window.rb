@@ -1,10 +1,12 @@
 #表示ウィンドウ（壁紙とスクリーンセーバーで共用。GDIで描く）
-#裏画面に変わったドットだけを塗り、WM_PAINTでは写すだけにする
+#裏画面に描画し、WM_PAINTでは写すだけにする
 require_relative 'window'
 require_relative 'engine'
+require_relative 'image_engine'
 require_relative 'loader'
 require_relative 'wic'
 require_relative 'platform'
+require_relative 'settings'
 require_relative 'render_math'
 require_relative 'tray_window'
 
@@ -12,9 +14,14 @@ class DisplayWindow < NativeWindow
   TIMER_TICK = 1
   TIMER_CHECK = 2
 
+  attr_reader :render_mode
+
   #初期化（引数modeはwallpaperかscreensaver、引数paintingsは使う絵の一覧、引数cache_dirはキャッシュのフォルダ）
-  def initialize(mode:, paintings:, cache_dir:, pause_on_battery: true)
+  def initialize(mode:, paintings:, cache_dir:, pause_on_battery: true, render_mode: :dotart)
     @mode = mode
+    @paintings = paintings
+    @cache_dir = cache_dir
+    @render_mode = render_mode
     if mode == :wallpaper
       x, y, w, h = Platform::API_READY ? Platform.virtual_screen : [0, 0, 1280, 720]
       ex_style = Platform::WS_EX_LAYERED
@@ -36,6 +43,13 @@ class DisplayWindow < NativeWindow
     )
     @buffer = BackBuffer.new(@hwnd, w, h)
     @buffer.fill_all(WaveEngine::BACKGROUND)
+
+    @image_engine = nil
+    if @render_mode == :normal
+      @image_engine = NormalImageEngine.new(paintings, w, h, hdc_ref: @buffer.dc)
+      @image_engine.request_full_redraw
+    end
+
     @engine_time = 0.0
     @last_tick_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     @paused = false
@@ -53,7 +67,11 @@ class DisplayWindow < NativeWindow
       attach_wallpaper
       @tray_window = TrayWindow.new(self) if Platform::API_READY
     end
-    @engine.request_full_redraw
+    if @render_mode == :normal && @image_engine
+      @image_engine.request_full_redraw
+    else
+      @engine.request_full_redraw
+    end
     advance_frame
     invalidate(nil)
     Platform.UpdateWindow(@hwnd) if Platform::API_READY
@@ -64,8 +82,37 @@ class DisplayWindow < NativeWindow
 
   #ウィンドウを閉じる
   def close
+    @image_engine.dispose if @image_engine
     @tray_window.close if @tray_window
     super
+  end
+
+  #モード設定を再読み込みして切り替える
+  def reload_mode
+    data_dir = Platform.data_dir
+    app_root = File.expand_path('..', __dir__)
+    pdir = File.join(app_root, 'assets', 'paintings')
+    pdir = File.expand_path('../assets/paintings', app_root) unless File.exist?(File.join(pdir, 'credits.json'))
+    credits = Loader.credits(pdir)
+    settings = AppSettings.load(data_dir, credits.map { |c| c['id'] })
+    new_mode = settings['mode'] == 'normal' ? :normal : :dotart
+    return if @render_mode == new_mode
+
+    @render_mode = new_mode
+    if @render_mode == :normal
+      @image_engine.dispose if @image_engine
+      @image_engine = NormalImageEngine.new(@paintings, @width, @height, hdc_ref: @buffer.dc)
+      @image_engine.request_full_redraw
+    else
+      @image_engine.dispose if @image_engine
+      @image_engine = nil
+      @engine.request_full_redraw
+    end
+    @buffer.fill_all(WaveEngine::BACKGROUND)
+    advance_frame
+    invalidate(nil)
+    Platform.UpdateWindow(@hwnd) if Platform::API_READY
+    schedule_tick
   end
 
   #壁紙が非表示中か
@@ -149,6 +196,7 @@ class DisplayWindow < NativeWindow
       wparam.to_i == TIMER_CHECK ? on_check : on_tick
       0
     when WM_DESTROY
+      @image_engine.dispose if @image_engine
       @tray_window.close if @tray_window
       @buffer.dispose
       Platform.PostQuitMessage(0)
@@ -164,7 +212,6 @@ class DisplayWindow < NativeWindow
 
   private
 
-
   #壁紙として貼り付ける（失敗しても表示は続ける）
   def attach_wallpaper
     log_path = File.join(Platform.data_dir, 'wallpaper.log')
@@ -173,16 +220,22 @@ class DisplayWindow < NativeWindow
     File.open(log_path, 'a') { |f| f.puts "#{Time.now}: 貼り付け失敗（#{e.message}）" } rescue nil
   end
 
-  #時間を進めて、変わったドットだけ裏画面に塗る
+  #時間を進めて、裏画面を更新する
   def advance_frame
     now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-    changes = @engine.frame(now)
-    return if changes.empty?
-    changes.each do |col, row, rgb|
-      @buffer.fill(RenderMath.dot_rect(col, row, WaveEngine::DOT, WaveEngine::FILL), rgb)
+    if @render_mode == :normal && @image_engine
+      @image_engine.render(@buffer.dc, now)
+      invalidate(nil)
+      Platform.UpdateWindow(@hwnd) if Platform::API_READY
+    else
+      changes = @engine.frame(now)
+      return if changes.empty?
+      changes.each do |col, row, rgb|
+        @buffer.fill(RenderMath.dot_rect(col, row, WaveEngine::DOT, WaveEngine::FILL), rgb)
+      end
+      invalidate(RenderMath.union_rect(changes, WaveEngine::DOT))
+      Platform.UpdateWindow(@hwnd) if Platform::API_READY
     end
-    invalidate(RenderMath.union_rect(changes, WaveEngine::DOT))
-    Platform.UpdateWindow(@hwnd) if Platform::API_READY
   end
 
   #次のタイマーの間隔を決める（切り替え中は16ミリ秒、表示中は間引く）
@@ -191,7 +244,12 @@ class DisplayWindow < NativeWindow
       kill_timer(TIMER_TICK)
     else
       now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-      if @engine.needs_redraw?(now)
+      needs = if @render_mode == :normal && @image_engine
+                @image_engine.needs_redraw?(now)
+              else
+                @engine.needs_redraw?(now)
+              end
+      if needs
         set_timer(TIMER_TICK, 16)
       else
         set_timer(TIMER_TICK, 250)
@@ -212,7 +270,6 @@ class DisplayWindow < NativeWindow
     return if @wallpaper_hidden
     Platform.keep_below_icons(@hwnd, File.join(Platform.data_dir, 'wallpaper.log')) if @mode == :wallpaper
   end
-
 
   #スクリーンセーバーのマウス移動（数ピクセルの揺れは無視する。引数lparamは座標）
   def on_mouse_move(lparam)

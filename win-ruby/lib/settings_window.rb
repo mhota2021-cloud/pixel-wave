@@ -1,9 +1,10 @@
-﻿#設定画面（GDIで描く。プレビューと絵の一覧と2つのボタンだけ）
+#設定画面（GDIで描く。プレビューと絵の一覧と操作ボタン）
 #裏画面に描き、操作があったときとプレビューが動いているときだけ描き直す
 require 'fileutils'
 require 'securerandom'
 require_relative 'window'
 require_relative 'engine'
+require_relative 'image_engine'
 require_relative 'loader'
 require_relative 'crop_window'
 require_relative 'wic'
@@ -50,9 +51,11 @@ class SettingsWindow < NativeWindow
     @thumbs = {}
     @scroll = 0
     @hover = nil
+    @pressed = nil
     @engine_time = 0.0
     @last_tick_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
     sync_wallpaper_state
+    @image_engine = nil
     @switch_anims = {
       autostart: (@settings['autostart'] ? 1.0 : 0.0),
       wallpaper: (@settings['wallpaper'] ? 1.0 : 0.0),
@@ -70,6 +73,7 @@ class SettingsWindow < NativeWindow
     invalidate
     set_timer(TIMER_TICK, 250)
     run
+    @image_engine&.dispose
     @buffer.dispose
     Platform.DeleteObject(@font_body)
     Platform.DeleteObject(@font_button)
@@ -92,6 +96,9 @@ class SettingsWindow < NativeWindow
     when WM_MOUSEMOVE
       on_mouse_move(lparam)
       0
+    when WM_LBUTTONDOWN
+      on_mouse_down(lparam)
+      0
     when WM_LBUTTONUP
       on_click(lparam)
       0
@@ -102,6 +109,7 @@ class SettingsWindow < NativeWindow
       close
       0
     when WM_DESTROY
+      @image_engine&.dispose
       Platform.PostQuitMessage(0)
       0
     end
@@ -117,32 +125,35 @@ class SettingsWindow < NativeWindow
     Platform.CreateFontW(-px, 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 0, 0, name_ptr)
   end
 
-  #プレビュー用のエンジンを作り直す（実際の画面と同じ16:9の比率で中央に表示し、絵が横長に切り抜かれすぎないようにする）
+  #プレビュー用のエンジンを作り直す（モニター比率で中央に配置）
   def build_preview
     list = Loader.paintings(@settings, @paintings_dir, @data_dir)
     rects, _cards = SettingsLayout.layout(@width, @height, items.length, @scroll)
-    px, py, pw, ph = rects[:preview]
-    #16:9で内接する大きさを計算
-    target_aspect = 16.0 / 9.0
-    if pw.to_f / ph > target_aspect
-      content_h = ph
-      content_w = (ph * target_aspect).round
+    sx, sy, sw, sh = rects[:preview_screen]
+
+    @preview_offset_x = sx
+    @preview_offset_y = sy
+    @preview_width = sw
+    @preview_height = sh
+
+    if @settings['mode'] == 'normal'
+      @image_engine&.dispose
+      @image_engine = NormalImageEngine.new(list, sw, sh, hdc_ref: @buffer.dc)
+      @image_engine.request_full_redraw
     else
-      content_w = pw
-      content_h = (pw / target_aspect).round
+      @image_engine&.dispose
+      @image_engine = nil
+      cols = [(sw / PREVIEW_DOT.to_f).ceil, 1].max
+      rows = [(sh / PREVIEW_DOT.to_f).ceil, 1].max
+      grids = Loader.grids(list, cols, rows, Platform.cache_dir, Wic.method(:decode))
+      @engine = WaveEngine.new(grids, cols, rows, dot: PREVIEW_DOT, fill: PREVIEW_FILL)
+      @preview_cols = cols
+      @preview_rows = rows
+      @dot_colors = {}
+      @engine.request_full_redraw
+      now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      apply_preview_changes(@engine.frame(now))
     end
-    cols = [(content_w / PREVIEW_DOT.to_f).ceil, 1].max
-    rows = [(content_h / PREVIEW_DOT.to_f).ceil, 1].max
-    @preview_offset_x = px + (pw - cols * PREVIEW_DOT) / 2
-    @preview_offset_y = py + (ph - rows * PREVIEW_DOT) / 2
-    grids = Loader.grids(list, cols, rows, Platform.cache_dir, Wic.method(:decode))
-    @engine = WaveEngine.new(grids, cols, rows, dot: PREVIEW_DOT, fill: PREVIEW_FILL)
-    @preview_cols = cols
-    @preview_rows = rows
-    @dot_colors = {}
-    @engine.request_full_redraw
-    now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
-    apply_preview_changes(@engine.frame(now))
   end
 
   #一覧の項目を作る（追加した画像を先頭にし、非表示の内蔵素材は除く）
@@ -171,12 +182,14 @@ class SettingsWindow < NativeWindow
   #プレビューの変わったドットを裏画面へ塗る（引数changesは変わったドット）
   def apply_preview_changes(changes)
     return if changes.nil? || changes.empty?
-    rects, _cards = SettingsLayout.layout(@width, @height, items.length, @scroll)
-    px = @preview_offset_x || rects[:preview][0]
-    py = @preview_offset_y || rects[:preview][1]
+    px = @preview_offset_x || 16
+    py = @preview_offset_y || 16
+    sw = @preview_width || 428
+    sh = @preview_height || 240
     changes.each do |col, row, rgb|
       @dot_colors[row * @preview_cols + col] = rgb
       x, y, w, h = RenderMath.dot_rect(col, row, PREVIEW_DOT, PREVIEW_FILL)
+      next if x + w > sw || y + h > sh
       @buffer.fill([px + x, py + y, w, h], rgb)
     end
     union = RenderMath.union_rect(changes, PREVIEW_DOT)
@@ -215,14 +228,31 @@ class SettingsWindow < NativeWindow
     @engine_time += dt
     anim_moving = update_switch_animations(dt)
     redraw_all if anim_moving
-    if @engine.needs_redraw?(now)
-      apply_preview_changes(@engine.frame(now))
-      set_timer(TIMER_TICK, 16)
-    elsif anim_moving
-      invalidate
-      set_timer(TIMER_TICK, 16)
-    else
-      set_timer(TIMER_TICK, 250)
+
+    if @settings['mode'] == 'normal' && @image_engine
+      if @image_engine.needs_redraw?(now)
+        rects, _ = SettingsLayout.layout(@width, @height, items.length, @scroll)
+        sx, sy, sw, sh = rects[:preview_screen]
+        @image_engine.render(@buffer.dc, now, offset_x: sx, offset_y: sy)
+        draw_rect_border([sx, sy, sw, sh], [20, 20, 26])
+        invalidate(rects[:preview_bezel])
+        set_timer(TIMER_TICK, 16)
+      elsif anim_moving
+        invalidate
+        set_timer(TIMER_TICK, 16)
+      else
+        set_timer(TIMER_TICK, 250)
+      end
+    elsif @engine
+      if @engine.needs_redraw?(now)
+        apply_preview_changes(@engine.frame(now))
+        set_timer(TIMER_TICK, 16)
+      elsif anim_moving
+        invalidate
+        set_timer(TIMER_TICK, 16)
+      else
+        set_timer(TIMER_TICK, 250)
+      end
     end
   end
 
@@ -232,29 +262,122 @@ class SettingsWindow < NativeWindow
     @buffer.fill_all(BG)
     draw_preview(rects)
     draw_grid(rects, cards)
-    autostart_label = @settings['autostart'] ? 'ログイン時起動 ON' : 'ログイン時起動 OFF'
-    draw_toggle_button(rects[:autostart], autostart_label, :autostart, @hover == :autostart)
-    draw_button(rects[:solid], '🎨', :normal, @hover == :solid)
-    draw_button(rects[:add], '＋', :normal, @hover == :add)
-    draw_toggle_button(rects[:wallpaper], '壁紙', :wallpaper, @hover == :wallpaper)
-    draw_toggle_button(rects[:saver], 'スクリーンセーバー', :saver, @hover == :saver)
+    autostart_label = @settings['autostart'] ? 'ログイン時起動ON' : 'ログイン時起動OFF'
+    draw_toggle_button(rects[:autostart], autostart_label, :autostart, @hover == :autostart, @pressed == :autostart)
+
+    mode_label = @settings['mode'] == 'normal' ? 'モード:通常画像' : 'モード:ドット絵'
+    #モードボタンは通常ボタンと同じ色調（立体感付き）
+    draw_3d_button(rects[:mode], mode_label, hover: @hover == :mode, pressed: @pressed == :mode)
+
+    draw_3d_button(rects[:solid], '🎨', hover: @hover == :solid, pressed: @pressed == :solid, font: @font_button)
+    draw_3d_button(rects[:add], '＋', hover: @hover == :add, pressed: @pressed == :add, font: @font_button)
+    draw_toggle_button(rects[:wallpaper], '壁紙', :wallpaper, @hover == :wallpaper, @pressed == :wallpaper)
+    draw_toggle_button(rects[:saver], 'スクリーンセーバー', :saver, @hover == :saver, @pressed == :saver)
   end
 
-  #プレビューを描く（引数rectsは配置）
+  #プレビューを描く（モニター比率の画面とベゼル枠）
   def draw_preview(rects)
-    x, y, w, h = rects[:preview]
-    @buffer.fill([x, y, w, h], PREVIEW_BG)
-    ox = @preview_offset_x || x
-    oy = @preview_offset_y || y
-    pw = (@preview_cols || 1) * PREVIEW_DOT
-    ph = (@preview_rows || 1) * PREVIEW_DOT
-    @buffer.fill([ox, oy, pw, ph], PREVIEW_BG)
-    @dot_colors.each do |i, rgb|
-      col = i % @preview_cols
-      row = i / @preview_cols
-      dx, dy, dw, dh = RenderMath.dot_rect(col, row, PREVIEW_DOT, PREVIEW_FILL)
-      @buffer.fill([ox + dx, oy + dy, dw, dh], rgb)
+    sx, sy, sw, sh = rects[:preview_screen]
+    bx, by, bw, bh = rects[:preview_bezel]
+    hdc = @buffer.dc
+
+    #1. モニターベゼルの影
+    shadow_brush = Platform.CreateSolidBrush(RenderMath.colorref([12, 12, 16]))
+    shadow_pen = Platform.CreatePen(Platform::PS_SOLID, 1, RenderMath.colorref([12, 12, 16]))
+    old_brush = Platform.SelectObject(hdc, shadow_brush)
+    old_pen = Platform.SelectObject(hdc, shadow_pen)
+    Platform.RoundRect(hdc, bx, by + 3, bx + bw, by + bh + 3, 8, 8)
+
+    #2. モニターベゼル本体
+    bezel_brush = Platform.CreateSolidBrush(RenderMath.colorref([36, 36, 44]))
+    bezel_pen = Platform.CreatePen(Platform::PS_SOLID, 1, RenderMath.colorref([68, 68, 82]))
+    Platform.SelectObject(hdc, bezel_brush)
+    Platform.SelectObject(hdc, bezel_pen)
+    Platform.RoundRect(hdc, bx, by, bx + bw, by + bh, 8, 8)
+
+    Platform.SelectObject(hdc, old_brush)
+    Platform.SelectObject(hdc, old_pen)
+    Platform.DeleteObject(shadow_brush)
+    Platform.DeleteObject(shadow_pen)
+    Platform.DeleteObject(bezel_brush)
+    Platform.DeleteObject(bezel_pen)
+
+    #3. スクリーン内部の背景
+    @buffer.fill([sx, sy, sw, sh], PREVIEW_BG)
+
+    #4. 映像の描画
+    if @settings['mode'] == 'normal' && @image_engine
+      now = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+      @image_engine.render(@buffer.dc, now, offset_x: sx, offset_y: sy)
+    else
+      @dot_colors&.each do |i, rgb|
+        col = i % @preview_cols
+        row = i / @preview_cols
+        dx, dy, dw, dh = RenderMath.dot_rect(col, row, PREVIEW_DOT, PREVIEW_FILL)
+        next if dx + dw > sw || dy + dh > sh
+        @buffer.fill([sx + dx, sy + dy, dw, dh], rgb)
+      end
     end
+
+    #5. スクリーンの内枠境界線
+    draw_rect_border([sx, sy, sw, sh], [20, 20, 26])
+  end
+
+  #矩形の外枠線を描く
+  def draw_rect_border(rect, rgb)
+    x, y, w, h = rect
+    hdc = @buffer.dc
+    pen = Platform.CreatePen(Platform::PS_SOLID, 1, RenderMath.colorref(rgb))
+    null_brush = Platform.GetStockObject(5)
+    old_pen = Platform.SelectObject(hdc, pen)
+    old_brush = Platform.SelectObject(hdc, null_brush)
+    Platform.RoundRect(hdc, x, y, x + w, y + h, 4, 4)
+    Platform.SelectObject(hdc, old_pen)
+    Platform.SelectObject(hdc, old_brush)
+    Platform.DeleteObject(pen)
+  end
+
+  #立体感のあるボタンを描く（厚みとシャドウによる3Dプッシュ感）
+  def draw_3d_button(rect, label, hover: false, pressed: false, font: @font_body, text_color: [240, 240, 245])
+    x, y, w, h = rect
+    hdc = @buffer.dc
+
+    shadow_h = 3
+    btn_y = pressed ? y + 2 : y
+    btn_h = h - shadow_h
+
+    #1. 下端の立体影（ドロップシャドウ）
+    shadow_brush = Platform.CreateSolidBrush(RenderMath.colorref([14, 14, 18]))
+    shadow_pen = Platform.CreatePen(Platform::PS_SOLID, 1, RenderMath.colorref([14, 14, 18]))
+    old_brush = Platform.SelectObject(hdc, shadow_brush)
+    old_pen = Platform.SelectObject(hdc, shadow_pen)
+    Platform.RoundRect(hdc, x, y + 2, x + w, y + h, 6, 6)
+
+    #2. ボタン本体
+    bg_col = if pressed
+               [36, 36, 44]
+             elsif hover
+               [56, 56, 68]
+             else
+               [44, 44, 54]
+             end
+    border_col = hover ? [90, 90, 115] : [65, 65, 80]
+
+    body_brush = Platform.CreateSolidBrush(RenderMath.colorref(bg_col))
+    body_pen = Platform.CreatePen(Platform::PS_SOLID, 1, RenderMath.colorref(border_col))
+    Platform.SelectObject(hdc, body_brush)
+    Platform.SelectObject(hdc, body_pen)
+    Platform.RoundRect(hdc, x, btn_y, x + w, btn_y + btn_h, 6, 6)
+
+    Platform.SelectObject(hdc, old_brush)
+    Platform.SelectObject(hdc, old_pen)
+    Platform.DeleteObject(shadow_brush)
+    Platform.DeleteObject(shadow_pen)
+    Platform.DeleteObject(body_brush)
+    Platform.DeleteObject(body_pen)
+
+    #3. 文字ラベル
+    draw_text(label, [x, btn_y, w, btn_h], font, text_color, DT_CENTER | DT_VCENTER | DT_SINGLELINE)
   end
 
   #一覧を描く（引数rectsは配置、引数cardsは項目と矩形の組）
@@ -270,75 +393,118 @@ class SettingsWindow < NativeWindow
     Platform.DeleteObject(rgn)
   end
 
-  #チェックボックスを描く（引数rectは矩形、引数checkedは選択中か、引数hoverはホバー中か）
-  def draw_checkbox(rect, checked, hover)
+  #立体的なチェックボックスを描く（引数rectは矩形、引数checkedは選択中か、引数hoverはホバー中か、引数pressedは押下中か）
+  def draw_checkbox(rect, checked, hover, pressed: false)
     x, y, w, h = rect
     hdc = @buffer.dc
 
+    shadow_h = 2
+    btn_y = pressed ? y + 2 : y
+    btn_h = h - shadow_h
+
+    #1. 下端の立体影
+    shadow_col = checked ? [8, 48, 90] : [10, 10, 14]
+    shadow_brush = Platform.CreateSolidBrush(RenderMath.colorref(shadow_col))
+    shadow_pen = Platform.CreatePen(Platform::PS_SOLID, 1, RenderMath.colorref(shadow_col))
+    old_brush = Platform.SelectObject(hdc, shadow_brush)
+    old_pen = Platform.SelectObject(hdc, shadow_pen)
+    Platform.RoundRect(hdc, x, y + 2, x + w, y + h, 6, 6)
+
+    #2. ボタン本体
     if checked
-      bg_color = hover ? ACCENT_HOVER : ACCENT
-      border_color = bg_color
+      bg_col = if pressed
+                 [9, 74, 140]
+               elsif hover
+                 ACCENT_HOVER
+               else
+                 ACCENT
+               end
+      border_col = hover ? [70, 165, 255] : [38, 130, 225]
     else
-      bg_color = [24, 24, 30]
-      border_color = hover ? [215, 215, 235] : [135, 135, 150]
+      bg_col = if pressed
+                 [24, 24, 30]
+               elsif hover
+                 [42, 42, 54]
+               else
+                 [30, 30, 38]
+               end
+      border_col = hover ? [180, 180, 205] : [80, 80, 96]
     end
 
-    r_bg, g_bg, b_bg = bg_color
-    r_bd, g_bd, b_bd = border_color
-
-    brush = Platform.CreateSolidBrush(r_bg | (g_bg << 8) | (b_bg << 16))
-    pen = Platform.CreatePen(Platform::PS_SOLID, 2, r_bd | (g_bd << 8) | (b_bd << 16))
-    old_brush = Platform.SelectObject(hdc, brush)
-    old_pen = Platform.SelectObject(hdc, pen)
-
-    Platform.RoundRect(hdc, x, y, x + w, y + h, 6, 6)
+    body_brush = Platform.CreateSolidBrush(RenderMath.colorref(bg_col))
+    body_pen = Platform.CreatePen(Platform::PS_SOLID, 1, RenderMath.colorref(border_col))
+    Platform.SelectObject(hdc, body_brush)
+    Platform.SelectObject(hdc, body_pen)
+    Platform.RoundRect(hdc, x, btn_y, x + w, btn_y + btn_h, 6, 6)
 
     Platform.SelectObject(hdc, old_brush)
     Platform.SelectObject(hdc, old_pen)
-    Platform.DeleteObject(brush)
-    Platform.DeleteObject(pen)
+    Platform.DeleteObject(shadow_brush)
+    Platform.DeleteObject(shadow_pen)
+    Platform.DeleteObject(body_brush)
+    Platform.DeleteObject(body_pen)
 
+    #3. チェックマーク
     if checked
-      draw_text('✓', [x, y, w, h], @font_body, [255, 255, 255], DT_CENTER | DT_VCENTER | DT_SINGLELINE)
+      draw_text('✓', [x, btn_y, w, btn_h], @font_body, [255, 255, 255], DT_CENTER | DT_VCENTER | DT_SINGLELINE)
     end
   end
 
-  #角丸アイコンボタンを描く（引数rectは矩形、引数iconは文字、引数hoverはホバー中か、引数kindは種類）
-  def draw_icon_button(rect, icon, hover, kind = :accent)
+  #立体的な角丸アイコンボタンを描く（引数rectは矩形、引数iconは文字、引数hoverはホバー中か、引数pressedは押下中か、引数kindは種類）
+  def draw_icon_button(rect, icon, hover, pressed: false, kind: :accent)
     x, y, w, h = rect
     hdc = @buffer.dc
 
-    if hover
-      if kind == :danger
-        bg_color = [180, 40, 40]
-        border_color = [220, 80, 80]
-      else
-        bg_color = ACCENT
-        border_color = ACCENT_HOVER
-      end
-      text_color = [255, 255, 255]
+    shadow_h = 2
+    btn_y = pressed ? y + 2 : y
+    btn_h = h - shadow_h
+
+    #1. 下端の立体影
+    shadow_col = [10, 10, 14]
+    shadow_brush = Platform.CreateSolidBrush(RenderMath.colorref(shadow_col))
+    shadow_pen = Platform.CreatePen(Platform::PS_SOLID, 1, RenderMath.colorref(shadow_col))
+    old_brush = Platform.SelectObject(hdc, shadow_brush)
+    old_pen = Platform.SelectObject(hdc, shadow_pen)
+    Platform.RoundRect(hdc, x, y + 2, x + w, y + h, 6, 6)
+
+    #2. ボタン本体
+    if kind == :danger
+      bg_col = if pressed
+                 [140, 30, 30]
+               elsif hover
+                 [185, 42, 42]
+               else
+                 [32, 32, 40]
+               end
+      border_col = hover ? [225, 80, 80] : [80, 80, 95]
+      text_col = hover || pressed ? [255, 255, 255] : [220, 220, 230]
     else
-      bg_color = [24, 24, 30]
-      border_color = [110, 110, 125]
-      text_color = [210, 210, 220]
+      bg_col = if pressed
+                 [9, 74, 140]
+               elsif hover
+                 ACCENT
+               else
+                 [32, 32, 40]
+               end
+      border_col = hover ? [38, 130, 225] : [80, 80, 95]
+      text_col = hover || pressed ? [255, 255, 255] : [220, 220, 230]
     end
 
-    r_bg, g_bg, b_bg = bg_color
-    r_bd, g_bd, b_bd = border_color
-
-    brush = Platform.CreateSolidBrush(r_bg | (g_bg << 8) | (b_bg << 16))
-    pen = Platform.CreatePen(Platform::PS_SOLID, 1, r_bd | (g_bd << 8) | (b_bd << 16))
-    old_brush = Platform.SelectObject(hdc, brush)
-    old_pen = Platform.SelectObject(hdc, pen)
-
-    Platform.RoundRect(hdc, x, y, x + w, y + h, 6, 6)
+    body_brush = Platform.CreateSolidBrush(RenderMath.colorref(bg_col))
+    body_pen = Platform.CreatePen(Platform::PS_SOLID, 1, RenderMath.colorref(border_col))
+    Platform.SelectObject(hdc, body_brush)
+    Platform.SelectObject(hdc, body_pen)
+    Platform.RoundRect(hdc, x, btn_y, x + w, btn_y + btn_h, 6, 6)
 
     Platform.SelectObject(hdc, old_brush)
     Platform.SelectObject(hdc, old_pen)
-    Platform.DeleteObject(brush)
-    Platform.DeleteObject(pen)
+    Platform.DeleteObject(shadow_brush)
+    Platform.DeleteObject(shadow_pen)
+    Platform.DeleteObject(body_brush)
+    Platform.DeleteObject(body_pen)
 
-    draw_text(icon, [x, y, w, h], @font_body, text_color, DT_CENTER | DT_VCENTER | DT_SINGLELINE)
+    #3. アイコン文字
+    draw_text(icon, [x, btn_y, w, btn_h], @font_body, text_col, DT_CENTER | DT_VCENTER | DT_SINGLELINE)
   end
 
   #カードを描く（引数itemは項目、引数rectは矩形、引数indexは番号）
@@ -354,15 +520,19 @@ class SettingsWindow < NativeWindow
       Platform.StretchDIBits(@buffer.dc, x, y, w, SettingsLayout::THUMB_H, sx, sy, sw, sh, thumb[:bits], thumb[:info], 0, Platform::SRCCOPY)
     end
     checked = @settings['enabled'].include?(item[:id])
-    draw_checkbox([x + 7, y + 7, 24, 24], checked, card_hover)
+    card_pressed = index && @pressed.is_a?(Array) && @pressed[1] == index && @pressed[0] == :card
+    del_pressed = index && @pressed == [:delete, index]
+    crop_pressed = index && @pressed == [:crop, index]
+
+    draw_checkbox([x + 7, y + 7, 24, 24], checked, card_hover, pressed: card_pressed)
 
     is_solid = item[:id].to_s.start_with?('solid_')
     del_hover = index && @hover == [:delete, index]
     crop_hover = index && @hover == [:crop, index]
 
-    draw_icon_button([x + w - 31, y + 7, 24, 24], '×', del_hover, :danger)
+    draw_icon_button([x + w - 31, y + 7, 24, 24], '×', del_hover, pressed: del_pressed, kind: :danger)
     unless is_solid
-      draw_icon_button([x + w - 61, y + 7, 24, 24], '✂', crop_hover, :accent)
+      draw_icon_button([x + w - 61, y + 7, 24, 24], '✂', crop_hover, pressed: crop_pressed, kind: :accent)
     end
     lines = wrap_text(item[:title], w - 12, 2)
     lines.each_with_index do |line, i|
@@ -373,68 +543,91 @@ class SettingsWindow < NativeWindow
     end
   end
 
-#トグルスイッチボタンを描く（引数rectは矩形、引数labelは文字、引数keyは識別子、引数hoverは乗っているか）
-def draw_toggle_button(rect, label, key, hover)
-  x, y, w, h = rect
-  base = hover ? SURFACE_HOVER : SURFACE
-  @buffer.fill(rect, base)
+  #トグルスイッチボタンを描く（引数rectは矩形、引数labelは文字、引数keyは識別子、引数hoverは乗っているか、引数pressedは押下中か）
+  def draw_toggle_button(rect, label, key, hover, pressed = false)
+    x, y, w, h = rect
+    hdc = @buffer.dc
 
-  anim_pos = @switch_anims[key] || 0.0
+    #立体的なボタン影と境界
+    shadow_h = 3
+    btn_y = pressed ? y + 2 : y
+    btn_h = h - shadow_h
 
-  track_h = h >= 48 ? 26 : 22
-  track_w = (track_h * 1.85).round
-  track_y = y + (h - track_h) / 2
-  track_x = x + w - track_w - 14
+    #影
+    shadow_brush = Platform.CreateSolidBrush(RenderMath.colorref([14, 14, 18]))
+    shadow_pen = Platform.CreatePen(Platform::PS_SOLID, 1, RenderMath.colorref([14, 14, 18]))
+    old_brush = Platform.SelectObject(hdc, shadow_brush)
+    old_pen = Platform.SelectObject(hdc, shadow_pen)
+    Platform.RoundRect(hdc, x, y + 2, x + w, y + h, 6, 6)
 
-  text_rect = [x + 14, y, track_x - x - 20, h]
-  text_color = hover ? [255, 255, 255] : FG
-  font = h >= 48 ? @font_button : @font_body
-  draw_text(label, text_rect, font, text_color, DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX)
+    #本体
+    base_col = if pressed
+                 [34, 34, 42]
+               elsif hover
+                 SURFACE_HOVER
+               else
+                 SURFACE
+               end
+    border_col = hover ? [85, 85, 105] : [60, 60, 72]
 
-  draw_toggle_switch(@buffer.dc, [track_x, track_y, track_w, track_h], anim_pos)
-end
+    body_brush = Platform.CreateSolidBrush(RenderMath.colorref(base_col))
+    body_pen = Platform.CreatePen(Platform::PS_SOLID, 1, RenderMath.colorref(border_col))
+    Platform.SelectObject(hdc, body_brush)
+    Platform.SelectObject(hdc, body_pen)
+    Platform.RoundRect(hdc, x, btn_y, x + w, btn_y + btn_h, 6, 6)
 
-#スイッチのピル形状とノブを描く（引数hdcは描画先、引数track_rectは[x, y, w, h]、引数anim_posは0.0〜1.0）
-def draw_toggle_switch(hdc, track_rect, anim_pos)
-  tx, ty, tw, th = track_rect
-  off_color = [60, 60, 70]
-  on_color = [11, 92, 173]
-  r = (off_color[0] + (on_color[0] - off_color[0]) * anim_pos).round
-  g = (off_color[1] + (on_color[1] - off_color[1]) * anim_pos).round
-  b = (off_color[2] + (on_color[2] - off_color[2]) * anim_pos).round
+    Platform.SelectObject(hdc, old_brush)
+    Platform.SelectObject(hdc, old_pen)
+    Platform.DeleteObject(shadow_brush)
+    Platform.DeleteObject(shadow_pen)
+    Platform.DeleteObject(body_brush)
+    Platform.DeleteObject(body_pen)
 
-  brush = Platform.CreateSolidBrush(r | (g << 8) | (b << 16))
-  old_brush = Platform.SelectObject(hdc, brush)
-  null_pen = Platform.GetStockObject(Platform::NULL_PEN)
-  old_pen = Platform.SelectObject(hdc, null_pen)
+    anim_pos = @switch_anims[key] || 0.0
 
-  Platform.RoundRect(hdc, tx, ty, tx + tw, ty + th, th, th)
+    track_h = h >= 48 ? 26 : 22
+    track_w = (track_h * 1.85).round
+    track_y = btn_y + (btn_h - track_h) / 2
+    track_x = x + w - track_w - 14
 
-  pad = 3
-  knob_d = th - pad * 2
-  travel = tw - knob_d - pad * 2
-  kx = tx + pad + (travel * anim_pos).round
-  ky = ty + pad
+    text_rect = [x + 14, btn_y, track_x - x - 20, btn_h]
+    text_color = hover ? [255, 255, 255] : FG
+    font = h >= 48 ? @font_button : @font_body
+    draw_text(label, text_rect, font, text_color, DT_VCENTER | DT_SINGLELINE | DT_NOPREFIX)
 
-  knob_brush = Platform.CreateSolidBrush(0x00FFFFFF)
-  Platform.SelectObject(hdc, knob_brush)
-  Platform.Ellipse(hdc, kx, ky, kx + knob_d, ky + knob_d)
+    draw_toggle_switch(@buffer.dc, [track_x, track_y, track_w, track_h], anim_pos)
+  end
 
-  Platform.SelectObject(hdc, old_brush)
-  Platform.SelectObject(hdc, old_pen)
-  Platform.DeleteObject(brush)
-  Platform.DeleteObject(knob_brush)
-end
+  #スイッチのピル形状とノブを描く（引数hdcは描画先、引数track_rectは[x, y, w, h]、引数anim_posは0.0から1.0）
+  def draw_toggle_switch(hdc, track_rect, anim_pos)
+    tx, ty, tw, th = track_rect
+    off_color = [60, 60, 70]
+    on_color = [11, 92, 173]
+    r = (off_color[0] + (on_color[0] - off_color[0]) * anim_pos).round
+    g = (off_color[1] + (on_color[1] - off_color[1]) * anim_pos).round
+    b = (off_color[2] + (on_color[2] - off_color[2]) * anim_pos).round
 
-#ボタンを描く（引数rectは矩形、引数labelは文字、引数kindは種類、引数hoverは上に乗っているかどうか）
-def draw_button(rect, label, kind, hover)
-    base = if kind == :accent
-             hover ? ACCENT_HOVER : ACCENT
-           else
-             hover ? SURFACE_HOVER : SURFACE
-           end
-    @buffer.fill(rect, base)
-    draw_text(label, rect, @font_button, [255, 255, 255], DT_CENTER | DT_VCENTER | DT_SINGLELINE)
+    brush = Platform.CreateSolidBrush(r | (g << 8) | (b << 16))
+    old_brush = Platform.SelectObject(hdc, brush)
+    null_pen = Platform.GetStockObject(Platform::NULL_PEN)
+    old_pen = Platform.SelectObject(hdc, null_pen)
+
+    Platform.RoundRect(hdc, tx, ty, tx + tw, ty + th, th, th)
+
+    pad = 3
+    knob_d = th - pad * 2
+    travel = tw - knob_d - pad * 2
+    kx = tx + pad + (travel * anim_pos).round
+    ky = ty + pad
+
+    knob_brush = Platform.CreateSolidBrush(0x00FFFFFF)
+    Platform.SelectObject(hdc, knob_brush)
+    Platform.Ellipse(hdc, kx, ky, kx + knob_d, ky + knob_d)
+
+    Platform.SelectObject(hdc, old_brush)
+    Platform.SelectObject(hdc, old_pen)
+    Platform.DeleteObject(brush)
+    Platform.DeleteObject(knob_brush)
   end
 
   #文字を描く（引数textは文字、引数rectは矩形、引数fontはフォント、引数rgbは色、引数flagsは寄せ方）
@@ -505,7 +698,7 @@ def draw_button(rect, label, kind, hover)
     @thumbs[item[:id]] = nil
   end
 
-  #マウスが乗った対象を覚える（引数lparamは座標）
+  #マウス移動の処理（引数lparamは座標）
   def on_mouse_move(lparam)
     mx, my = mouse_pos(lparam)
     rects, cards = SettingsLayout.layout(@width, @height, items.length, @scroll)
@@ -521,9 +714,20 @@ def draw_button(rect, label, kind, hover)
     invalidate
   end
 
-  #クリックの処理（引数lparamは座標）
+  #マウス押下の処理（立体ボタンの押し込み演出）
+  def on_mouse_down(lparam)
+    mx, my = mouse_pos(lparam)
+    rects, cards = SettingsLayout.layout(@width, @height, items.length, @scroll)
+    target = SettingsLayout.hit_test(rects, cards, mx, my)
+    return if @pressed == target
+    @pressed = target
+    redraw_all
+    invalidate
+  end
+
   #クリックの処理（引数lparamは座標）
   def on_click(lparam)
+    @pressed = nil
     mx, my = mouse_pos(lparam)
     list = items
     rects, cards = SettingsLayout.layout(@width, @height, list.length, @scroll)
@@ -534,6 +738,13 @@ def draw_button(rect, label, kind, hover)
       apply_autostart
       persist
       set_timer(TIMER_TICK, 16)
+    when :mode
+      @settings['mode'] = (@settings['mode'] == 'normal' ? 'dotart' : 'normal')
+      persist
+      build_preview
+      redraw_all
+      invalidate
+      notify_wallpaper_mode
     when :solid
       add_solid_color_via_dialog
     when :add
@@ -557,6 +768,15 @@ def draw_button(rect, label, kind, hover)
     end
     redraw_all
     invalidate
+  end
+
+  #壁紙プロセスにモード変更を通知する
+  def notify_wallpaper_mode
+    return unless Platform::API_READY
+    tray_hwnd = Platform.FindWindowW(Platform.wide('PixelWaveTrayHelper'), nil)
+    if tray_hwnd && !tray_hwnd.null?
+      Platform.PostMessageW(tray_hwnd, Platform::WM_USER_SET_MODE, 0, 0)
+    end
   end
 
   #ホイールで一覧をスクロールする（引数wparamはホイールの情報）
@@ -610,7 +830,6 @@ def draw_button(rect, label, kind, hover)
     persist
   end
 
-  #ファイルを選んで画像を足す
   #色を選んで単色画像を足す
   def add_solid_color_via_dialog
     rgb = Platform::API_READY ? Platform.choose_color_dialog(@hwnd) : nil
@@ -752,6 +971,7 @@ def draw_button(rect, label, kind, hover)
     @settings['wallpaper'] = false
     apply_autostart
   end
+
   #スクリーンセーバーの有効化と無効化を切り替える
   def toggle_screensaver
     if Platform.screensaver_active?

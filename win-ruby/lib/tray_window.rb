@@ -36,6 +36,9 @@ class TrayWindow < NativeWindow
     when Platform::WM_USER_SHOW_WALLPAPER
       @display_window.show_wallpaper
       0
+    when Platform::WM_USER_SET_MODE
+      @display_window.reload_mode
+      0
     when WM_DESTROY
       Platform.remove_tray_icon(@hwnd) if Platform::API_READY
       0

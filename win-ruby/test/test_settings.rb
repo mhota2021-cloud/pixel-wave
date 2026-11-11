@@ -17,12 +17,22 @@ class TestSettings < Minitest::Test
       assert_equal true, s['autostart']
       assert_equal({}, s['builtinCrop'])
       assert_equal([], s['hiddenBuiltin'])
+      assert_equal 'dotart', s['mode']
     end
   end
 
   def test_roundtrip
     Dir.mktmpdir do |dir|
-      original = { 'enabled' => ['a'], 'userImages' => [{ 'id' => 'u1', 'file' => 'u1.jpg', 'title' => 'x' }], 'wallpaper' => true, 'pauseOnBattery' => true, 'autostart' => true, 'builtinCrop' => {}, 'hiddenBuiltin' => ['b'] }
+      original = {
+        'enabled' => ['a'],
+        'userImages' => [{ 'id' => 'u1', 'file' => 'u1.jpg', 'title' => 'x' }],
+        'wallpaper' => true,
+        'pauseOnBattery' => true,
+        'autostart' => true,
+        'builtinCrop' => {},
+        'hiddenBuiltin' => ['b'],
+        'mode' => 'normal'
+      }
       AppSettings.save(dir, original)
       assert_equal original, AppSettings.load(dir, IDS)
     end
