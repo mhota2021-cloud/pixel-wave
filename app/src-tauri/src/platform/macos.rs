@@ -72,8 +72,12 @@ extern "C" {
         blob: *const c_void,
         source: *const c_void,
     ) -> *const c_void;
-    static kIOPSPowerSourceStateKey: *const c_void;
-    static kIOPSACPowerValue: *const c_void;
+}
+
+//文字列からCFStringを作る（使い終わったらCFReleaseで解放する）
+unsafe fn cf_string(text: &str) -> *const c_void {
+    let c_text = CString::new(text).expect("CFStringテキスト");
+    CFStringCreateWithCString(std::ptr::null(), c_text.as_ptr(), 0x08000100)
 }
 
 //電池で動いているか調べる（電池があり、交流電源につながっていないとき真、電池の無い機種では偽）
@@ -86,6 +90,8 @@ pub fn is_battery_powered() -> bool {
         let list = IOPSCopyPowerSourcesList(blob);
         let mut on_battery = false;
         if !list.is_null() {
+            let key_state = cf_string("Power Source State");
+            let val_ac = cf_string("AC Power");
             let count = CFArrayGetCount(list);
             for i in 0..count {
                 let source = CFArrayGetValueAtIndex(list, i);
@@ -96,10 +102,17 @@ pub fn is_battery_powered() -> bool {
                 if description.is_null() {
                     continue;
                 }
-                let state = CFDictionaryGetValue(description, kIOPSPowerSourceStateKey);
-                if !state.is_null() && CFEqual(state, kIOPSACPowerValue) == 0 {
+                let state = CFDictionaryGetValue(description, key_state);
+                if !state.is_null() && CFEqual(state, val_ac) == 0 {
                     on_battery = true;
+                    break;
                 }
+            }
+            if !val_ac.is_null() {
+                CFRelease(val_ac);
+            }
+            if !key_state.is_null() {
+                CFRelease(key_state);
             }
             CFRelease(list);
         }
