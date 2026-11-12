@@ -54,6 +54,13 @@ class SettingsWindow < NativeWindow
     @pressed = nil
     @engine_time = 0.0
     @last_tick_at = Process.clock_gettime(Process::CLOCK_MONOTONIC)
+
+    #画面サイズ（解像度）を取得し、プレビュー・切り取りの縦横比を動的に反映する
+    sw, sh = Platform::API_READY ? Platform.primary_screen : [1920, 1080]
+    @screen_w = (sw > 0) ? sw : 1920
+    @screen_h = (sh > 0) ? sh : 1080
+    @screen_aspect = @screen_w.to_f / @screen_h
+
     sync_wallpaper_state
     @image_engine = nil
     @switch_anims = {
@@ -62,6 +69,11 @@ class SettingsWindow < NativeWindow
       saver: (Platform.screensaver_active? ? 1.0 : 0.0)
     }
     build_preview
+  end
+
+  #現在の画面サイズ比率を反映した配置情報を計算する
+  def current_layout
+    SettingsLayout.layout(@width, @height, items.length, @scroll, @screen_aspect)
   end
 
   #表示を始める
@@ -125,10 +137,10 @@ class SettingsWindow < NativeWindow
     Platform.CreateFontW(-px, 0, 0, 0, 400, 0, 0, 0, 1, 0, 0, 0, 0, name_ptr)
   end
 
-  #プレビュー用のエンジンを作り直す（モニター比率で中央に配置）
+  #プレビュー用のエンジンを作り直す（画面サイズ比率で中央に配置）
   def build_preview
     list = Loader.paintings(@settings, @paintings_dir, @data_dir)
-    rects, _cards = SettingsLayout.layout(@width, @height, items.length, @scroll)
+    rects, _cards = current_layout
     sx, sy, sw, sh = rects[:preview_screen]
 
     @preview_offset_x = sx
@@ -231,7 +243,7 @@ class SettingsWindow < NativeWindow
 
     if @settings['mode'] == 'normal' && @image_engine
       if @image_engine.needs_redraw?(now)
-        rects, _ = SettingsLayout.layout(@width, @height, items.length, @scroll)
+        rects, _ = current_layout
         sx, sy, sw, sh = rects[:preview_screen]
         @image_engine.render(@buffer.dc, now, offset_x: sx, offset_y: sy)
         draw_rect_border([sx, sy, sw, sh], [20, 20, 26])
@@ -258,7 +270,7 @@ class SettingsWindow < NativeWindow
 
   #全体を裏画面へ描く
   def redraw_all
-    rects, cards = SettingsLayout.layout(@width, @height, items.length, @scroll)
+    rects, cards = current_layout
     @buffer.fill_all(BG)
     draw_preview(rects)
     draw_grid(rects, cards)
@@ -516,7 +528,7 @@ class SettingsWindow < NativeWindow
     @buffer.fill(rect, base)
     thumb = thumb_for(item)
     if thumb
-      sx, sy, sw, sh = DotArt.croprect(thumb[:w], thumb[:h], 16, 9, item[:crop] || :center)
+      sx, sy, sw, sh = DotArt.croprect(thumb[:w], thumb[:h], @screen_w, @screen_h, item[:crop] || :center)
       Platform.StretchDIBits(@buffer.dc, x, y, w, SettingsLayout::THUMB_H, sx, sy, sw, sh, thumb[:bits], thumb[:info], 0, Platform::SRCCOPY)
     end
     checked = @settings['enabled'].include?(item[:id])
@@ -701,7 +713,7 @@ class SettingsWindow < NativeWindow
   #マウス移動の処理（引数lparamは座標）
   def on_mouse_move(lparam)
     mx, my = mouse_pos(lparam)
-    rects, cards = SettingsLayout.layout(@width, @height, items.length, @scroll)
+    rects, cards = current_layout
     hover = SettingsLayout.hit_test(rects, cards, mx, my)
     if hover.is_a?(Array) && hover[0] == :crop
       list = items
@@ -717,7 +729,7 @@ class SettingsWindow < NativeWindow
   #マウス押下の処理（立体ボタンの押し込み演出）
   def on_mouse_down(lparam)
     mx, my = mouse_pos(lparam)
-    rects, cards = SettingsLayout.layout(@width, @height, items.length, @scroll)
+    rects, cards = current_layout
     target = SettingsLayout.hit_test(rects, cards, mx, my)
     return if @pressed == target
     @pressed = target
@@ -730,7 +742,7 @@ class SettingsWindow < NativeWindow
     @pressed = nil
     mx, my = mouse_pos(lparam)
     list = items
-    rects, cards = SettingsLayout.layout(@width, @height, list.length, @scroll)
+    rects, cards = current_layout
     target = SettingsLayout.hit_test(rects, cards, mx, my)
     case target
     when :autostart
@@ -783,7 +795,7 @@ class SettingsWindow < NativeWindow
   def on_wheel(wparam)
     raw = (wparam.to_i >> 16) & 0xFFFF
     delta = raw >= 0x8000 ? raw - 0x10000 : raw
-    rects, _cards = SettingsLayout.layout(@width, @height, items.length, @scroll)
+    rects, _cards = current_layout
     max_scroll = SettingsLayout.max_scroll(rects, items.length)
     @scroll = [[@scroll - (delta / 120) * 40, 0].max, max_scroll].min
     redraw_all
@@ -872,7 +884,7 @@ class SettingsWindow < NativeWindow
       ext = File.extname(path).downcase
       next unless %w[.jpg .jpeg .png].include?(ext)
 
-      crop_win = CropWindow.new(image_path: path, parent_hwnd: @hwnd)
+      crop_win = CropWindow.new(image_path: path, parent_hwnd: @hwnd, screen_aspect: @screen_aspect)
       crop = crop_win.run_modal
       next if crop.nil?
 
@@ -894,7 +906,7 @@ class SettingsWindow < NativeWindow
 
   #画像の切り取り位置を変更する
   def edit_image_crop(item)
-    crop_win = CropWindow.new(image_path: item[:path], initial_crop: item[:crop], parent_hwnd: @hwnd)
+    crop_win = CropWindow.new(image_path: item[:path], initial_crop: item[:crop], parent_hwnd: @hwnd, screen_aspect: @screen_aspect)
     crop = crop_win.run_modal
     return if crop.nil?
 

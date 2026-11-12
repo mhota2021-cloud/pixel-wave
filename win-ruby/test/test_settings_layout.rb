@@ -58,4 +58,17 @@ class TestSettingsLayout < Minitest::Test
     assert_equal sw + 8, bw
     assert_equal sh + 8, bh
   end
+
+  #画面サイズ比率（16:10など）の動的反映テスト
+  def test_preview_screen_rect_custom_aspect
+    preview = [16, 16, 848, 256]
+    sx, sy, sw, sh = SettingsLayout.preview_screen_rect(preview, 16.0 / 10.0)
+    assert_equal 240, sh
+    assert_equal 384, sw
+    assert sw.even? && sh.even?
+    assert sx >= 16 && sx + sw <= 16 + 848
+
+    rects, _ = SettingsLayout.layout(880, 760, 8, 0, 16.0 / 10.0)
+    assert_equal [sx, sy, sw, sh], rects[:preview_screen]
+  end
 end

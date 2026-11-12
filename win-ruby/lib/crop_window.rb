@@ -44,7 +44,7 @@ class CropWindow < NativeWindow
 
     super(
       class_name: 'PixelWaveCropWindowClass',
-      title: '切り取り範囲の調整 - Pixel Wave',
+      title: "切り取り範囲の調整 [画面比率 #{format('%.2f', @screen_aspect)}:1] - Pixel Wave",
       width: win_w,
       height: win_h,
       style: Platform::WS_POPUP | Platform::WS_VISIBLE
@@ -215,7 +215,7 @@ class CropWindow < NativeWindow
 
   def draw_header
     draw_text('切り取り範囲の調整', [@canvas_x, 18, 300, 26], @font_title, FG)
-    aspect_text = "モニター比率: #{format('%.2f', @screen_aspect)}:1 （枠をドラッグして移動、四隅で拡大縮小）"
+    aspect_text = "画面サイズ比率: #{format('%.2f', @screen_aspect)}:1 - 枠をドラッグして移動、四隅で拡大縮小"
     draw_text(aspect_text, [@canvas_x + 220, 22, @width - @canvas_x - 240, 22], @font_body, SUB)
   end
 

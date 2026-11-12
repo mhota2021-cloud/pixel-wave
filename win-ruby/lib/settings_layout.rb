@@ -11,11 +11,12 @@ module SettingsLayout
 
   module_function
 
-  #配置を計算する（引数widthとheightはウィンドウの大きさ、引数item_countは項目の数、引数scrollはスクロール量。戻り値は名前から矩形への対応と、項目と矩形の組の配列）
-  def layout(width, height, item_count, scroll)
+  #配置を計算する（引数widthとheightはウィンドウの大きさ、引数item_countは項目の数、引数scrollはスクロール量、引数aspectは画面の縦横比。戻り値は名前から矩形への対応と、項目と矩形の組の配列）
+  def layout(width, height, item_count, scroll, aspect = 16.0 / 9.0)
+    aspect = (aspect && aspect > 0) ? aspect.to_f : (16.0 / 9.0)
     rects = {}
     rects[:preview] = [MARGIN, MARGIN, width - MARGIN * 2, PREVIEW_H]
-    rects[:preview_screen] = preview_screen_rect(rects[:preview])
+    rects[:preview_screen] = preview_screen_rect(rects[:preview], aspect)
     sx, sy, sw, sh = rects[:preview_screen]
     rects[:preview_bezel] = [sx - 4, sy - 4, sw + 8, sh + 8]
 
