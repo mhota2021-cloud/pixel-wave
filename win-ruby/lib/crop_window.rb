@@ -176,14 +176,18 @@ class CropWindow < NativeWindow
     end
 
     # 初期計算：画像全体に収まる最大サイズのモニター比率枠（中央配置）
-    if @img_aspect > @screen_aspect
-      nw = @screen_aspect / @img_aspect
+    img_asp = (@img_aspect && @img_aspect > 0) ? @img_aspect : 1.0
+    scr_asp = (@screen_aspect && @screen_aspect > 0) ? @screen_aspect : (16.0 / 9.0)
+
+    # 初期計算：画像全体に収まる最大サイズのモニター比率枠（中央配置）
+    if img_asp > scr_asp
+      nw = scr_asp / img_asp
       nh = 1.0
       nx = (1.0 - nw) / 2.0
       ny = 0.0
     else
       nw = 1.0
-      nh = @img_aspect / @screen_aspect
+      nh = img_asp / scr_asp
       nx = 0.0
       ny = (1.0 - nh) / 2.0
     end
