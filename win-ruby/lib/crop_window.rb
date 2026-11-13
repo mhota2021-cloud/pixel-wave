@@ -2,6 +2,7 @@
 require_relative 'window'
 require_relative 'wic'
 require_relative 'platform'
+require_relative 'i18n'
 
 class CropWindow < NativeWindow
   HANDLE_SIZE = 10
@@ -21,7 +22,8 @@ class CropWindow < NativeWindow
 
   attr_reader :result
 
-  def initialize(image_path:, initial_crop: nil, parent_hwnd: nil, screen_aspect: nil)
+  def initialize(image_path:, initial_crop: nil, parent_hwnd: nil, screen_aspect: nil, lang: 'ja')
+    @lang = I18n.normalize(lang)
     @image_path = image_path
     @parent_hwnd = parent_hwnd
 
@@ -44,7 +46,7 @@ class CropWindow < NativeWindow
 
     super(
       class_name: 'PixelWaveCropWindowClass',
-      title: "切り取り範囲の調整 [画面比率 #{format('%.2f', @screen_aspect)}:1] - Pixel Wave",
+      title: I18n.t(@lang, :crop_window_title, @screen_aspect),
       width: win_w,
       height: win_h,
       style: Platform::WS_POPUP | Platform::WS_VISIBLE
@@ -218,8 +220,8 @@ class CropWindow < NativeWindow
   end
 
   def draw_header
-    draw_text('切り取り範囲の調整', [@canvas_x, 18, 300, 26], @font_title, FG)
-    aspect_text = "画面サイズ比率: #{format('%.2f', @screen_aspect)}:1 - 枠をドラッグして移動、四隅で拡大縮小"
+    draw_text(I18n.t(@lang, :crop_header), [@canvas_x, 18, 300, 26], @font_title, FG)
+    aspect_text = I18n.t(@lang, :crop_sub, @screen_aspect)
     draw_text(aspect_text, [@canvas_x + 220, 22, @width - @canvas_x - 240, 22], @font_body, SUB)
   end
 
@@ -272,7 +274,7 @@ Platform.DeleteObject(rgn)
     @buffer.fill([0, fy, @width, 1], BORDER)
 
     # ボタン矩形
-    btn_w = 110
+    btn_w = 130
     btn_h = 36
     btn_y = fy + 17
 
@@ -280,9 +282,9 @@ Platform.DeleteObject(rgn)
     @rect_cancel = [@width - 24 - btn_w * 2 - 12, btn_y, btn_w, btn_h]
     @rect_reset = [24, btn_y, btn_w, btn_h]
 
-    draw_button(@rect_reset, '中央に戻す', @hover_action == :reset ? BTN_HOVER : BTN_BG, FG)
-    draw_button(@rect_cancel, 'キャンセル', @hover_action == :cancel ? BTN_HOVER : BTN_BG, FG)
-    draw_button(@rect_confirm, '決定 (Enter)', @hover_action == :confirm ? PRIMARY_HOVER : PRIMARY_BG, [255, 255, 255])
+    draw_button(@rect_reset, I18n.t(@lang, :crop_reset), @hover_action == :reset ? BTN_HOVER : BTN_BG, FG)
+    draw_button(@rect_cancel, I18n.t(@lang, :crop_cancel), @hover_action == :cancel ? BTN_HOVER : BTN_BG, FG)
+    draw_button(@rect_confirm, I18n.t(@lang, :crop_confirm), @hover_action == :confirm ? PRIMARY_HOVER : PRIMARY_BG, [255, 255, 255])
   end
 
   def draw_button(rect, text, bg_color, text_color)

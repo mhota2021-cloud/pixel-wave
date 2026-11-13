@@ -13,6 +13,7 @@ require_relative 'settings'
 require_relative 'settings_layout'
 require_relative 'render_math'
 require_relative 'dotart'
+require_relative 'i18n'
 
 class SettingsWindow < NativeWindow
   TIMER_TICK = 1
@@ -69,6 +70,11 @@ class SettingsWindow < NativeWindow
       saver: (Platform.screensaver_active? ? 1.0 : 0.0)
     }
     build_preview
+  end
+
+  #現在の表示言語を返す（設定に無ければOSの表示言語から決める）
+  def lang
+    I18n.normalize(@settings['lang'] || Platform.default_lang)
   end
 
   #現在の画面サイズ比率を反映した配置情報を計算する
@@ -180,12 +186,15 @@ class SettingsWindow < NativeWindow
       user_list << { id: u['id'], title: u['title'], artist: '', path: File.join(@data_dir, 'user-images', u['file']), crop: crop, builtin: false }
     end
 
+    en = (lang == 'en')
     builtin_list = []
     @credits.each do |c|
       next if hidden_builtins.include?(c['id'])
       crop = builtin_crops[c['id']] || c['crop'] || 'center'
       crop = crop.to_sym if crop.is_a?(String)
-      builtin_list << { id: c['id'], title: c['title'], artist: c['artist'], path: File.join(@paintings_dir, c['file']), crop: crop, builtin: true }
+      title = en && c['title_en'] ? c['title_en'] : c['title']
+      artist = en && c['artist_en'] ? c['artist_en'] : c['artist']
+      builtin_list << { id: c['id'], title: title, artist: artist, path: File.join(@paintings_dir, c['file']), crop: crop, builtin: true }
     end
 
     user_list + builtin_list
@@ -274,17 +283,19 @@ class SettingsWindow < NativeWindow
     @buffer.fill_all(BG)
     draw_preview(rects)
     draw_grid(rects, cards)
-    autostart_label = @settings['autostart'] ? 'ログイン時起動ON' : 'ログイン時起動OFF'
+    cur_lang = lang
+    autostart_label = I18n.t(cur_lang, @settings['autostart'] ? :autostart_on : :autostart_off)
     draw_toggle_button(rects[:autostart], autostart_label, :autostart, @hover == :autostart, @pressed == :autostart)
 
-    mode_label = @settings['mode'] == 'normal' ? 'モード:通常画像' : 'モード:ドット絵'
+    mode_label = I18n.t(cur_lang, @settings['mode'] == 'normal' ? :mode_normal : :mode_pixel)
     #モードボタンは通常ボタンと同じ色調（立体感付き）
     draw_3d_button(rects[:mode], mode_label, hover: @hover == :mode, pressed: @pressed == :mode)
 
+    draw_3d_button(rects[:lang], I18n.t(cur_lang, :lang_toggle), hover: @hover == :lang, pressed: @pressed == :lang)
     draw_3d_button(rects[:solid], '🎨', hover: @hover == :solid, pressed: @pressed == :solid, font: @font_button)
     draw_3d_button(rects[:add], '＋', hover: @hover == :add, pressed: @pressed == :add, font: @font_button)
-    draw_toggle_button(rects[:wallpaper], '壁紙', :wallpaper, @hover == :wallpaper, @pressed == :wallpaper)
-    draw_toggle_button(rects[:saver], 'スクリーンセーバー', :saver, @hover == :saver, @pressed == :saver)
+    draw_toggle_button(rects[:wallpaper], I18n.t(cur_lang, :wallpaper), :wallpaper, @hover == :wallpaper, @pressed == :wallpaper)
+    draw_toggle_button(rects[:saver], I18n.t(cur_lang, :screensaver), :saver, @hover == :saver, @pressed == :saver)
   end
 
   #プレビューを描く（モニター比率の画面とベゼル枠）
@@ -757,6 +768,11 @@ class SettingsWindow < NativeWindow
       redraw_all
       invalidate
       notify_wallpaper_mode
+    when :lang
+      @settings['lang'] = (lang == 'en' ? 'ja' : 'en')
+      persist
+      redraw_all
+      invalidate
     when :solid
       add_solid_color_via_dialog
     when :add
@@ -856,7 +872,7 @@ class SettingsWindow < NativeWindow
     bmp_path = File.join(dest_dir, file)
     File.binwrite(bmp_path, create_solid_bmp(r, g, b))
 
-    title = "単色 (#{hex})"
+    title = I18n.t(lang, :solid_title, hex)
     @settings['userImages'].unshift({ 'id' => id, 'file' => file, 'title' => title, 'crop' => 'center' })
     @settings['enabled'].unshift(id)
     persist
@@ -878,13 +894,13 @@ class SettingsWindow < NativeWindow
 
   #ファイルを選んで画像を足す（切り取り範囲を調整してから保存する）
   def add_images_via_dialog
-    paths = Platform::API_READY ? Platform.open_image_dialog : []
+    paths = Platform::API_READY ? Platform.open_image_dialog(I18n.t(lang, :image_filter)) : []
     added = false
     paths.each do |path|
       ext = File.extname(path).downcase
       next unless %w[.jpg .jpeg .png].include?(ext)
 
-      crop_win = CropWindow.new(image_path: path, parent_hwnd: @hwnd, screen_aspect: @screen_aspect)
+      crop_win = CropWindow.new(image_path: path, parent_hwnd: @hwnd, screen_aspect: @screen_aspect, lang: lang)
       crop = crop_win.run_modal
       next if crop.nil?
 
@@ -906,7 +922,7 @@ class SettingsWindow < NativeWindow
 
   #画像の切り取り位置を変更する
   def edit_image_crop(item)
-    crop_win = CropWindow.new(image_path: item[:path], initial_crop: item[:crop], parent_hwnd: @hwnd, screen_aspect: @screen_aspect)
+    crop_win = CropWindow.new(image_path: item[:path], initial_crop: item[:crop], parent_hwnd: @hwnd, screen_aspect: @screen_aspect, lang: lang)
     crop = crop_win.run_modal
     return if crop.nil?
 

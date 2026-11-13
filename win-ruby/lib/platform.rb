@@ -77,6 +77,7 @@ module Platform
     extern 'void* OpenProcess(int, int, int)'
     extern 'int TerminateProcess(void*, int)'
     extern 'int CloseHandle(void*)'
+    extern 'unsigned short GetUserDefaultUILanguage()'
     #ファイルを選ぶ画面
     extern 'int GetOpenFileNameW(void*)'
     #色を選ぶ画面
@@ -370,8 +371,8 @@ module Platform
   end
 
   #画像ファイルを選ぶ画面を開く（戻り値は選ばれた場所の配列、取り消しなら空）
-  def open_image_dialog
-    filter = wide("画像\0*.jpg;*.jpeg;*.png\0\0")
+  def open_image_dialog(filter_label = '画像')
+    filter = wide("#{filter_label}\0*.jpg;*.jpeg;*.png\0\0")
     file_buffer = Fiddle::Pointer.malloc(32768 * 2)
     file_buffer[0, 32768 * 2] = "\x00" * (32768 * 2)
     filter_ptr = Fiddle::Pointer.malloc(filter.bytesize)
@@ -483,23 +484,23 @@ module Platform
   end
 
   #タスクトレイの右クリックメニューを表示する（引数hwndはウィンドウ、引数pausedは一時停止中か、引数hiddenは非表示中か。戻り値は選ばれた番号）
-  def show_tray_menu(hwnd, paused, hidden = false)
+  def show_tray_menu(hwnd, paused, hidden = false, labels = {})
     return 0 unless API_READY
     menu = CreatePopupMenu()
     return 0 if menu.nil? || menu.null?
 
     wallpaper_label = if hidden
-                        '壁紙を表示'
+                        labels[:show] || '壁紙を表示'
                       elsif paused
-                        '壁紙を再開'
+                        labels[:resume] || '壁紙を再開'
                       else
-                        '壁紙を一時停止'
+                        labels[:pause] || '壁紙を一時停止'
                       end
-    AppendMenuW(menu, MF_STRING, 101, wide('設定を開く'))
+    AppendMenuW(menu, MF_STRING, 101, wide(labels[:open_settings] || '設定を開く'))
     AppendMenuW(menu, MF_SEPARATOR, 0, nil)
     AppendMenuW(menu, MF_STRING, 102, wide(wallpaper_label))
     AppendMenuW(menu, MF_SEPARATOR, 0, nil)
-    AppendMenuW(menu, MF_STRING, 103, wide('終了'))
+    AppendMenuW(menu, MF_STRING, 103, wide(labels[:exit] || '終了'))
 
     point = Fiddle::Pointer.malloc(8)
     GetCursorPos(point)
@@ -600,4 +601,13 @@ module Platform
 
   #スクリーンセーバーとして登録する（互換用）
   alias register_screensaver enable_screensaver
+
+  #OSの表示言語が日本語かどうかで既定の言語（'ja'または'en'）を返す
+  def default_lang
+    return 'ja' unless API_READY
+    lang_id = GetUserDefaultUILanguage() & 0x03FF
+    lang_id == 0x11 ? 'ja' : 'en'
+  rescue StandardError
+    'ja'
+  end
 end

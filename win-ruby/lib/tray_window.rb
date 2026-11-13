@@ -3,6 +3,8 @@
 #Progmanの子ウィンドウになる壁紙ウィンドウから分離して管理する
 require_relative 'window'
 require_relative 'platform'
+require_relative 'settings'
+require_relative 'i18n'
 
 class TrayWindow < NativeWindow
   #初期化（引数display_windowは操作対象のDisplayWindowインスタンス）
@@ -18,7 +20,7 @@ class TrayWindow < NativeWindow
       ex_style: Platform::WS_EX_TOOLWINDOW,
       style: Platform::WS_POPUP
     )
-    Platform.add_tray_icon(@hwnd, 'Pixel Wave - 壁紙') if Platform::API_READY
+    Platform.add_tray_icon(@hwnd, I18n.t(current_lang, :tray_tooltip)) if Platform::API_READY
   end
 
   #メッセージの処理
@@ -54,7 +56,15 @@ class TrayWindow < NativeWindow
     when 0x0202, 0x0203
       @display_window.open_settings
     when 0x0205, 0x007B
-      cmd = Platform.show_tray_menu(@hwnd, @display_window.paused?, @display_window.wallpaper_hidden?)
+      lang = current_lang
+      labels = {
+        open_settings: I18n.t(lang, :tray_open_settings),
+        show: I18n.t(lang, :tray_show),
+        resume: I18n.t(lang, :tray_resume),
+        pause: I18n.t(lang, :tray_pause),
+        exit: I18n.t(lang, :tray_exit)
+      }
+      cmd = Platform.show_tray_menu(@hwnd, @display_window.paused?, @display_window.wallpaper_hidden?, labels)
       case cmd
       when 101
         @display_window.open_settings
@@ -68,5 +78,13 @@ class TrayWindow < NativeWindow
         @display_window.close
       end
     end
+  end
+
+  #現在の表示言語を取得する
+  def current_lang
+    s = AppSettings.load(Platform.data_dir, [])
+    I18n.normalize(s['lang'] || Platform.default_lang)
+  rescue StandardError
+    Platform.default_lang
   end
 end

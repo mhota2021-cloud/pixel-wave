@@ -26,10 +26,70 @@ interface Credit {
   id: string;
   file: string;
   title: string;
+  title_en?: string;
   artist: string;
+  artist_en?: string;
   year?: string;
+  year_en?: string;
   source?: string;
   crop?: Painting["crop"];
+}
+
+type Lang = "ja" | "en";
+
+const MESSAGES = {
+  ja: {
+    addImage: "画像を追加",
+    deleteImage: "削除",
+    setWallpaper: "壁紙にする",
+    stopWallpaper: "壁紙を止める",
+    viewFullscreen: "全画面で表示",
+    stopDisplay: "表示を止める",
+    setScreensaver: "スクリーンセーバーにする",
+    credits: "出典",
+    sourceLink: "出典",
+    imageFilter: "画像",
+    langToggle: "English",
+    wallpaperStartError: (err: string) => `壁紙を始められませんでした：${err}`,
+    wallpaperStopError: (err: string) => `壁紙を止められませんでした：${err}`,
+    saverError: "スクリーンセーバーとして登録できませんでした",
+  },
+  en: {
+    addImage: "Add Image",
+    deleteImage: "Delete",
+    setWallpaper: "Set as Wallpaper",
+    stopWallpaper: "Stop Wallpaper",
+    viewFullscreen: "View Fullscreen",
+    stopDisplay: "Stop Display",
+    setScreensaver: "Set as Screensaver",
+    credits: "Credits",
+    sourceLink: "Source",
+    imageFilter: "Images",
+    langToggle: "日本語",
+    wallpaperStartError: (err: string) => `Failed to start wallpaper: ${err}`,
+    wallpaperStopError: (err: string) => `Failed to stop wallpaper: ${err}`,
+    saverError: "Failed to register as screensaver",
+  },
+} as const;
+
+const LANG_KEY = "pixel_wave_lang";
+
+function detectInitialLang(): Lang {
+  const fromUrl = new URLSearchParams(window.location.search).get("lang");
+  if (fromUrl === "ja" || fromUrl === "en") return fromUrl;
+  try {
+    const saved = window.localStorage.getItem(LANG_KEY);
+    if (saved === "ja" || saved === "en") return saved;
+  } catch {
+    //ignore
+  }
+  return navigator.language.toLowerCase().startsWith("ja") ? "ja" : "en";
+}
+
+let currentLang: Lang = detectInitialLang();
+
+function msg(): (typeof MESSAGES)[Lang] {
+  return MESSAGES[currentLang];
 }
 
 const creditList = credits as Credit[];
@@ -56,8 +116,8 @@ let engine: ReturnType<typeof createEngine> | null = null;
 function buildItems(): ListItem[] {
   const items: ListItem[] = creditList.map((c) => ({
     id: c.id,
-    title: c.title,
-    artist: c.artist,
+    title: currentLang === "en" && c.title_en ? c.title_en : c.title,
+    artist: currentLang === "en" && c.artist_en ? c.artist_en : c.artist,
     thumbSrc: `assets/paintings/${c.file}`,
     painting: { id: c.id, src: `assets/paintings/${c.file}`, crop: c.crop },
     builtin: true,
@@ -143,7 +203,7 @@ function render(): void {
       del.type = "button";
       del.className = "deleteButton";
       del.textContent = "×";
-      del.setAttribute("aria-label", "削除");
+      del.setAttribute("aria-label", msg().deleteImage);
       del.addEventListener("click", async () => {
         if (isTauri()) {
           await removeUserImage(item.id);
@@ -179,12 +239,58 @@ function render(): void {
 
   const wallpaperButton = document.getElementById("wallpaperButton");
   if (wallpaperButton) {
-    wallpaperButton.textContent = settings.wallpaper ? "壁紙を止める" : "壁紙にする";
+    wallpaperButton.textContent = settings.wallpaper ? msg().stopWallpaper : msg().setWallpaper;
   }
   const fullscreenButton = document.getElementById("fullscreenButton");
   if (fullscreenButton) {
-    fullscreenButton.textContent = settings.wallpaper ? "表示を止める" : "全画面で表示";
+    fullscreenButton.textContent = settings.wallpaper ? msg().stopDisplay : msg().viewFullscreen;
   }
+}
+
+//出典一覧を現在の言語で描き直す
+function renderCredits(): void {
+  const creditsPanel = document.getElementById("creditsPanel");
+  if (!creditsPanel) return;
+  creditsPanel.textContent = "";
+  for (const c of creditList) {
+    const line = document.createElement("p");
+    line.className = "creditLine";
+    const head = document.createElement("span");
+    const title = currentLang === "en" && c.title_en ? c.title_en : c.title;
+    const artist = currentLang === "en" && c.artist_en ? c.artist_en : c.artist;
+    const year = currentLang === "en" && c.year_en ? c.year_en : c.year;
+    if (currentLang === "en") {
+      head.textContent = year ? `${title} (${artist}, ${year})` : `${title} (${artist})`;
+    } else {
+      head.textContent = year ? `${title}（${artist}、${year}）` : `${title}（${artist}）`;
+    }
+    line.appendChild(head);
+    if (c.source) {
+      const link = document.createElement("a");
+      link.href = c.source;
+      link.textContent = msg().sourceLink;
+      link.target = "_blank";
+      link.rel = "noreferrer";
+      line.appendChild(document.createTextNode(currentLang === "en" ? " " : "　"));
+      line.appendChild(link);
+    }
+    creditsPanel.appendChild(line);
+  }
+}
+
+//固定ボタン類と言語属性を現在の言語へ合わせる
+function applyLanguage(): void {
+  document.documentElement.lang = currentLang;
+  const addButton = document.getElementById("addButton");
+  addButton?.setAttribute("aria-label", msg().addImage);
+  const saverButton = document.getElementById("saverButton");
+  if (saverButton) saverButton.textContent = msg().setScreensaver;
+  const creditsButton = document.getElementById("creditsButton");
+  if (creditsButton) creditsButton.textContent = msg().credits;
+  const langButton = document.getElementById("langButton");
+  if (langButton) langButton.textContent = msg().langToggle;
+  renderCredits();
+  render();
 }
 
 //画像を追加する（引数pathsは元の画像の場所の一覧）
@@ -210,7 +316,7 @@ async function main(): Promise<void> {
     engine = createEngine(canvas, selectedPaintings());
     engine.start();
   }
-  render();
+  applyLanguage();
 
   const addButton = document.getElementById("addButton");
   const fileInput = document.getElementById("fileInput") as HTMLInputElement | null;
@@ -218,7 +324,7 @@ async function main(): Promise<void> {
     if (isTauri()) {
       const selected = await open({
         multiple: true,
-        filters: [{ name: "画像", extensions: ["jpg", "jpeg", "png", "webp"] }],
+        filters: [{ name: msg().imageFilter, extensions: ["jpg", "jpeg", "png", "webp"] }],
       });
       if (!selected) return;
       const paths = Array.isArray(selected) ? selected : [selected];
@@ -259,7 +365,8 @@ async function main(): Promise<void> {
     } catch (e) {
       //失敗を握りつぶすと、押しても何も起きないように見えるので知らせる
       console.error("壁紙の切り替えに失敗した:", e);
-      window.alert(`壁紙を${target ? "始め" : "止め"}られませんでした：${String(e)}`);
+      const errText = target ? msg().wallpaperStartError(String(e)) : msg().wallpaperStopError(String(e));
+      window.alert(errText);
     }
     settings = await getSettings();
     render();
@@ -296,36 +403,27 @@ async function main(): Promise<void> {
       await registerScreensaver();
       settings = await getSettings();
     } catch {
-      window.alert("スクリーンセーバーとして登録できませんでした");
+      window.alert(msg().saverError);
     }
   });
 
-  //出典の一覧を作り、押すたびに開閉する
+  //出典パネルの開閉と言語切り替えボタン
   const creditsPanel = document.getElementById("creditsPanel");
-  if (creditsPanel) {
-    for (const c of creditList) {
-      const line = document.createElement("p");
-      line.className = "creditLine";
-      const head = document.createElement("span");
-      head.textContent = c.year ? `${c.title}（${c.artist}、${c.year}）` : `${c.title}（${c.artist}）`;
-      line.appendChild(head);
-      if (c.source) {
-        const link = document.createElement("a");
-        link.href = c.source;
-        link.textContent = "出典";
-        link.target = "_blank";
-        link.rel = "noreferrer";
-        line.appendChild(document.createTextNode("　"));
-        line.appendChild(link);
-      }
-      creditsPanel.appendChild(line);
-    }
-  }
   const creditsButton = document.getElementById("creditsButton");
   creditsButton?.addEventListener("click", () => {
     if (creditsPanel) {
       creditsPanel.hidden = !creditsPanel.hidden;
     }
+  });
+  const langButton = document.getElementById("langButton");
+  langButton?.addEventListener("click", () => {
+    currentLang = currentLang === "ja" ? "en" : "ja";
+    try {
+      window.localStorage.setItem(LANG_KEY, currentLang);
+    } catch {
+      //ignore
+    }
+    applyLanguage();
   });
 }
 

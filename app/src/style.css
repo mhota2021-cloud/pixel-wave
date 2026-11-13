@@ -211,7 +211,7 @@ button:disabled {
 
 .creditsBar {
   display: flex;
-  justify-content: flex-end;
+  justify-content: space-between;
   padding: 0 16px 12px;
 }
 

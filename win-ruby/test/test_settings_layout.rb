@@ -20,6 +20,11 @@ class TestSettingsLayout < Minitest::Test
     assert_equal :autostart, SettingsLayout.hit_test(rects, cards, sx + 2, sy + 2)
     assert sx + sw < rects[:add][0], '自動起動のボタンが＋と重ならないこと'
     assert sx + sw < rects[:solid][0], '自動起動のボタンが単色ボタンと重ならないこと'
+    mx, _my, mw, _mh = rects[:mode]
+    assert mx + mw < rects[:lang][0], 'モードボタンと言語ボタンが重ならないこと'
+    lx, ly, lw, _lh = rects[:lang]
+    assert lx + lw < rects[:solid][0], '言語ボタンと単色ボタンが重ならないこと'
+    assert_equal :lang, SettingsLayout.hit_test(rects, cards, lx + 2, ly + 2)
     sol_x, sol_y, _sol_w, _sol_h = rects[:solid]
     assert_equal :solid, SettingsLayout.hit_test(rects, cards, sol_x + 2, sol_y + 2)
     ax, ay, _aw, _ah = rects[:add]

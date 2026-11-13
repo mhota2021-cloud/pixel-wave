@@ -23,6 +23,7 @@ module SettingsLayout
     bar_y = MARGIN + PREVIEW_H + 8
     rects[:add] = [width - MARGIN - 44, bar_y, 44, 44]
     rects[:solid] = [width - MARGIN - 44 - 8 - 44, bar_y, 44, 44]
+    rects[:lang] = [width - MARGIN - 44 - 8 - 44 - 8 - 64, bar_y + 4, 64, 36]
     rects[:autostart] = [MARGIN, bar_y + 4, 210, 36]
     rects[:mode] = [MARGIN + 210 + 10, bar_y + 4, 180, 36]
     grid_y = bar_y + 44 + 8
@@ -88,6 +89,7 @@ module SettingsLayout
   def hit_test(rects, cards, mx, my)
     return :autostart if inside?(rects[:autostart], mx, my)
     return :mode if inside?(rects[:mode], mx, my)
+    return :lang if inside?(rects[:lang], mx, my)
     return :solid if inside?(rects[:solid], mx, my)
     return :add if inside?(rects[:add], mx, my)
     return :wallpaper if inside?(rects[:wallpaper], mx, my)

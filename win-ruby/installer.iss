@@ -18,6 +18,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 WizardStyle=modern
 
 [Languages]
+Name: "english"; MessagesFile: "compiler:Default.isl"
 Name: "japanese"; MessagesFile: "compiler:Languages\Japanese.isl"
 
 [Icons]
@@ -25,7 +26,7 @@ Name: "{autoprograms}\Pixel Wave"; Filename: "{app}\PixelWave.exe"
 Name: "{autodesktop}\Pixel Wave"; Filename: "{app}\PixelWave.exe"; Tasks: desktopicon
 
 [Tasks]
-Name: "desktopicon"; Description: "デスクトップにアイコンを作る"; Flags: unchecked
+Name: "desktopicon"; Description: "{cm:CreateDesktopIcon}"; Flags: unchecked
 
 [Run]
-Filename: "{app}\PixelWave.exe"; Description: "Pixel Waveを起動する"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\PixelWave.exe"; Description: "{cm:LaunchProgram,Pixel Wave}"; Flags: nowait postinstall skipifsilent

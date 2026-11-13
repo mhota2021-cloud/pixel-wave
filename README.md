@@ -1,3 +1,5 @@
+[English](README.en.md) | 日本語
+
 # Pixel Wave
 
 名画のドット絵が、同心円の波で次々に入れ替わる作品です。
