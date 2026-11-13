@@ -5,7 +5,7 @@
 AppId=PixelWave
 AppName=Pixel Wave
 AppVersion=0.1.0
-AppPublisher=Hotaka Mori
+AppPublisher=Pixel Wave
 DefaultDirName={localappdata}\Programs\PixelWave
 DefaultGroupName=Pixel Wave
 DisableProgramGroupPage=yes
