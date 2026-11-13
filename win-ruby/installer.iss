@@ -5,7 +5,7 @@
 AppId=PixelWave
 AppName=Pixel Wave
 AppVersion=0.1.0
-AppPublisher=Pixel Wave
+AppPublisher=xp_Beaker
 DefaultDirName={localappdata}\Programs\PixelWave
 DefaultGroupName=Pixel Wave
 DisableProgramGroupPage=yes
