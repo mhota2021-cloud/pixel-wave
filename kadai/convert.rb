@@ -5,15 +5,15 @@
 #   画像の後ろに「:top」「:bottom」を付けると、切り抜く位置を上端・下端にする（既定は中央）
 #
 # 1. ffmpegでJPEGなどをPPM（P6）に変換して読み込む（Rubyの標準ライブラリはJPEGを読めないため）
-# 2. 縦横比3:2に切り抜き、30×20のマスごとに色を平均して縮小する
+# 2. 縦横比3:2に切り抜き、60×40のマスごとに色を平均して縮小する
 # 3. k-means法で16色に減らす（乱数の種を固定し、何度実行しても同じ結果にする）
 #    切り抜き・縮小・k-meansは、Windows版のアプリと共通の部品（win-ruby/lib/dotart.rb）を使う
 # 4. 「$palettes」「$paintings」をRubyのコードとして「paintings.rb.txt」に書き出す
 
 require_relative "../win-ruby/lib/dotart"
 
-COLS = 30
-ROWS = 20
+COLS = 60
+ROWS = 40
 COLORS = 16
 SEED = 42
 
