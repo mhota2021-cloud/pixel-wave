@@ -50,3 +50,8 @@ jobs:
       - name: Rustの単体テスト
         working-directory: app/src-tauri
         run: cargo test
+
+      - name: Windows配布版の単体テスト
+        if: matrix.os == 'windows-latest'
+        working-directory: win
+        run: cargo test

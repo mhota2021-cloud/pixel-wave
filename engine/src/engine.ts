@@ -23,6 +23,7 @@ export interface Engine {
 const DOT_SIZE = 12;
 const GAP = 2;
 const DISPLAY_MS = 14000;
+const INITIAL_DISPLAY_MS = 1500;
 const TRANSITION_MS = 10000;
 const BG = "#141418";
 const BG_RGB: [number, number, number] = [20, 20, 24];
@@ -347,43 +348,56 @@ export function createEngine(canvas: HTMLCanvasElement, paintings: Painting[]): 
     });
   }
 
-  //絵の一覧を読み込み直す（引数listは絵の一覧、読み込めた絵だけで順番を作り直す）
+  //絵の一覧を読み込み直す（読み込めた絵から順次反映し、起動直後からすぐ動き出せるようにする）
   async function loadPaintings(list: Painting[]): Promise<void> {
     const token = ++loadToken;
     clearDisplayTimer();
     resize();
-    const results = await Promise.all(
-      list.map(async (painting) => {
-        const image = await loadImage(painting.src);
-        if (!image) return null;
-        const item: LoadedPainting = { painting, image, art: null, css: [], glowCss: [] };
-        convert(item);
-        return item;
-      }),
-    );
-    if (token !== loadToken || destroyed) return;
     const previousId = currentIndex >= 0 ? loaded[currentIndex]?.painting.id : undefined;
-    loaded = results.filter((item): item is LoadedPainting => item !== null);
-    playOrder = shuffleOrder(loaded.length, -1, Math.random);
+    loaded = [];
+    playOrder = [];
     playPos = 0;
     currentIndex = -1;
-    if (loaded.length > 0) {
-      const kept = previousId
-        ? loaded.findIndex((item) => item.painting.id === previousId)
-        : -1;
-      if (kept >= 0) {
-        currentIndex = kept;
-        playPos = Math.max(0, playOrder.indexOf(kept));
-      } else {
-        currentIndex = playOrder[0];
-        playPos = 0;
-      }
-      drawAll(loaded[currentIndex]);
-      if (started && !suspended) {
-        scheduleDisplay(DISPLAY_MS);
-      }
-    } else {
+    let scheduledInitial = false;
+
+    await Promise.all(
+      list.map(async (painting) => {
+        const image = await loadImage(painting.src);
+        if (!image || token !== loadToken || destroyed) return;
+        const item: LoadedPainting = { painting, image, art: null, css: [], glowCss: [] };
+        convert(item);
+        const newIdx = loaded.length;
+        loaded.push(item);
+        if (currentIndex < 0 && (!previousId || painting.id === previousId)) {
+          currentIndex = newIdx;
+          playOrder = shuffleOrder(loaded.length, -1, Math.random);
+          playPos = Math.max(0, playOrder.indexOf(currentIndex));
+          drawAll(item);
+        }
+        if (loaded.length >= 2 && !scheduledInitial && started && !suspended && timer === null && !transition) {
+          scheduledInitial = true;
+          playOrder = shuffleOrder(loaded.length, -1, Math.random);
+          playPos = Math.max(0, playOrder.indexOf(currentIndex));
+          scheduleDisplay(INITIAL_DISPLAY_MS);
+        }
+      }),
+    );
+
+    if (token !== loadToken || destroyed) return;
+    if (loaded.length === 0) {
       fillBackground();
+      return;
+    }
+    if (currentIndex < 0) {
+      currentIndex = 0;
+      drawAll(loaded[0]);
+    }
+    if (loaded.length >= 2) {
+      playOrder = shuffleOrder(loaded.length, -1, Math.random);
+      playPos = Math.max(0, playOrder.indexOf(currentIndex));
+      if (!scheduledInitial && started && !suspended && timer === null && !transition) {
+        scheduleDisplay(INITIAL_DISPLAY_MS);
+      }
     }
   }
 

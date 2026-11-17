@@ -1,5 +1,5 @@
 #タグを押したら3つのOSでビルドしてReleasesへ置く（お金のかかる署名は使わない）
-#WindowsはRuby版（win-ruby）をocranでexeにし、macOSとLinuxはTauri版をビルドする
+#WindowsはRust版（win）をInno Setupでインストーラーにし、macOSとLinuxはTauri版をビルドする
 name: Release
 
 on:
@@ -17,23 +17,19 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: "3.4"
-          working-directory: win-ruby
-          bundler-cache: true
+      - uses: dtolnay/rust-toolchain@stable
 
       - name: Inno Setupを入れる
         shell: pwsh
         run: choco install innosetup -y --no-progress
 
-      - name: Windows版（Ruby）のインストーラーをビルドする
-        working-directory: win-ruby
+      - name: Windows版（Rust）のインストーラーをビルドする
+        working-directory: win
         shell: pwsh
         run: ./build.ps1
 
       - name: Releasesへ置く（無ければ下書きを作る）
-        working-directory: win-ruby
+        working-directory: win
         shell: pwsh
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}

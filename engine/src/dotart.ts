@@ -116,20 +116,36 @@ export function kmeansQuantize(
 ): { palette: RGB[]; indices: Uint16Array } {
   const count = Math.floor(data.length / 3);
   const rng = createRng(seed);
+  //代表色は最大2000画素に間引いて計算し、最後に全画素へ割り当てる（4K画面の高速化）
+  const maxSamples = 2000;
+  let sample = data;
+  let sampleCount = count;
+  if (count > maxSamples) {
+    const sampled = new Uint8ClampedArray(maxSamples * 3);
+    const step = count / maxSamples;
+    for (let s = 0; s < maxSamples; s++) {
+      const idx = Math.floor(s * step) * 3;
+      sampled[s * 3] = data[idx];
+      sampled[s * 3 + 1] = data[idx + 1];
+      sampled[s * 3 + 2] = data[idx + 2];
+    }
+    sample = sampled;
+    sampleCount = maxSamples;
+  }
   const centers: number[] = [];
 
   //最初の中心は無作為に選んだ画素にする
-  const first = Math.floor(rng() * count) * 3;
-  centers.push(data[first], data[first + 1], data[first + 2]);
+  const first = Math.floor(rng() * sampleCount) * 3;
+  centers.push(sample[first], sample[first + 1], sample[first + 2]);
 
   //既存の中心からの距離に応じた確率で次の中心を選ぶ
   while (centers.length < k * 3) {
     let total = 0;
-    const weights: number[] = new Array<number>(count);
-    for (let i = 0; i < count; i++) {
+    const weights = new Float64Array(sampleCount);
+    for (let i = 0; i < sampleCount; i++) {
       let min = Infinity;
       for (let c = 0; c < centers.length; c += 3) {
-        min = Math.min(min, distance2(data, i * 3, centers, c));
+        min = Math.min(min, distance2(sample, i * 3, centers, c));
       }
       weights[i] = min;
       total += min;
@@ -141,41 +157,41 @@ export function kmeansQuantize(
     }
     let pick = rng() * total;
     let chosen = 0;
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < sampleCount; i++) {
       pick -= weights[i];
       if (pick <= 0) {
         chosen = i;
         break;
       }
     }
-    centers.push(data[chosen * 3], data[chosen * 3 + 1], data[chosen * 3 + 2]);
+    centers.push(sample[chosen * 3], sample[chosen * 3 + 1], sample[chosen * 3 + 2]);
   }
 
-  const indices = new Uint16Array(count);
+  const sampleIndices = new Uint16Array(sampleCount);
   for (let iter = 0; iter < 100; iter++) {
     let changed = false;
-    for (let i = 0; i < count; i++) {
+    for (let i = 0; i < sampleCount; i++) {
       let best = 0;
       let bestDist = Infinity;
       for (let c = 0; c < k; c++) {
-        const d = distance2(data, i * 3, centers, c * 3);
+        const d = distance2(sample, i * 3, centers, c * 3);
         if (d < bestDist) {
           bestDist = d;
           best = c;
         }
       }
-      if (indices[i] !== best) {
-        indices[i] = best;
+      if (sampleIndices[i] !== best) {
+        sampleIndices[i] = best;
         changed = true;
       }
     }
 
     const sums = new Float64Array(k * 4);
-    for (let i = 0; i < count; i++) {
-      const base = indices[i] * 4;
-      sums[base] += data[i * 3];
-      sums[base + 1] += data[i * 3 + 1];
-      sums[base + 2] += data[i * 3 + 2];
+    for (let i = 0; i < sampleCount; i++) {
+      const base = sampleIndices[i] * 4;
+      sums[base] += sample[i * 3];
+      sums[base + 1] += sample[i * 3 + 1];
+      sums[base + 2] += sample[i * 3 + 2];
       sums[base + 3] += 1;
     }
     for (let c = 0; c < k; c++) {
@@ -187,6 +203,25 @@ export function kmeansQuantize(
       }
     }
     if (!changed) break;
+  }
+
+  let indices: Uint16Array;
+  if (sampleCount === count) {
+    indices = sampleIndices;
+  } else {
+    indices = new Uint16Array(count);
+    for (let i = 0; i < count; i++) {
+      let best = 0;
+      let bestDist = Infinity;
+      for (let c = 0; c < k; c++) {
+        const d = distance2(data, i * 3, centers, c * 3);
+        if (d < bestDist) {
+          bestDist = d;
+          best = c;
+        }
+      }
+      indices[i] = best;
+    }
   }
 
   const palette: RGB[] = [];
